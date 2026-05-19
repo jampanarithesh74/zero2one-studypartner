@@ -1,0 +1,6 @@
+{
+  "name": "ZERO2ONE",
+  "description": "A student-friendly exam preparation platform for focused study and year-specific resources.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
