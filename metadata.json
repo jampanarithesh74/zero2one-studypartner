@@ -1,6 +1,6 @@
 {
   "name": "ZERO2ONE",
-  "description": "A student-friendly exam preparation platform for focused study and year-specific resources.",
+  "description": "An exam preparation platform for Anurag University students with admin-managed resources, including year-specific syllabus, study notes, and previous year questions.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

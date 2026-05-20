@@ -1,0 +1,24 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /resources/{allPaths=**} {
+      // Allow public read access
+      allow read: if true;
+      
+      // Helper function to check if user is an admin is harder in storage rules 
+      // without custom claims, so we'll check the email directly against the allowed list.
+      // This matches the firestore.rules logic.
+      function isAllowedAdmin() {
+        return request.auth != null && 
+               request.auth.token.email_verified == true &&
+               request.auth.token.email in [
+                 'jampanarithesh74@gmail.com',
+                 'jampanapadmaja7474@gmail.com',
+                 '25eg112c49@anurag.edu.in'
+               ];
+      }
+
+      allow write: if isAllowedAdmin();
+    }
+  }
+}

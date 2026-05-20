@@ -4,11 +4,14 @@
  */
 
 import { motion, AnimatePresence } from "motion/react";
-import { ChevronRight, Sparkles, ArrowLeft, BookOpen, Clock, Award, FileText } from "lucide-react";
-import { useState } from "react";
+import { ChevronRight, Sparkles, ArrowLeft, BookOpen, Clock, Award, FileText, Download, Layers, Shield, LogIn, LogOut, Plus, Trash2, Maximize2, Minimize2 } from "lucide-react";
+import { useState, useEffect, FormEvent } from "react";
 import { DEPARTMENTS, SYLLABUS_MAP, SUBJECT_DETAILS } from "./data/syllabus";
+import { auth, db, googleProvider, ALLOWED_ADMIN_EMAILS, handleFirestoreError, OperationType } from "./lib/firebase";
+import { onAuthStateChanged, signInWithPopup, signOut, User } from "firebase/auth";
+import { doc, getDoc, setDoc, collection, addDoc, query, where, onSnapshot, serverTimestamp, deleteDoc } from "firebase/firestore";
 
-type ViewState = "year-selection" | "dept-selection" | "sem-selection" | "syllabus-view";
+type ViewState = "year-selection" | "dept-selection" | "sem-selection" | "choice-selection" | "syllabus-view" | "resources-view";
 
 export default function App() {
   const [viewState, setViewState] = useState<ViewState>("year-selection");
@@ -16,6 +19,179 @@ export default function App() {
   const [selectedDept, setSelectedDept] = useState<string | null>(null);
   const [selectedSem, setSelectedSem] = useState<number | null>(null);
   const [activeSubject, setActiveSubject] = useState<string | null>(null);
+  const [resourceTab, setResourceTab] = useState<"notes" | "pyqs">("notes");
+  const [expandedUnit, setExpandedUnit] = useState<number | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // Auth & Admin State
+  const [user, setUser] = useState<User | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [isLoadingAuth, setIsLoadingAuth] = useState(true);
+
+  // Firestore Data State
+  const [uploadedResources, setUploadedResources] = useState<any[]>([]);
+
+  // Admin Upload State
+  const [uploading, setUploading] = useState(false);
+
+  useEffect(() => {
+    if (isFullscreen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = 'unset';
+    }
+    return () => {
+      document.body.style.overflow = 'unset';
+    };
+  }, [isFullscreen]);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      setUser(user);
+      if (user) {
+        // Check if user is in admins collection
+        try {
+          const adminDoc = await getDoc(doc(db, "admins", user.uid));
+          if (adminDoc.exists()) {
+            setIsAdmin(true);
+          } else if (ALLOWED_ADMIN_EMAILS.includes(user.email || "")) {
+            // Bootstrap: Add to admins collection if email is allowed
+            await setDoc(doc(db, "admins", user.uid), {
+              email: user.email,
+              addedAt: serverTimestamp()
+            });
+            setIsAdmin(true);
+          } else {
+            setIsAdmin(false);
+          }
+        } catch (error) {
+          console.error("Error checking admin status:", error);
+          setIsAdmin(false);
+        }
+      } else {
+        setIsAdmin(false);
+      }
+      setIsLoadingAuth(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Fetch resources based on selection
+  useEffect(() => {
+    if (viewState === "resources-view" && selectedDept && selectedSem) {
+      const q = query(
+        collection(db, "resources"),
+        where("branch", "==", selectedDept),
+        where("sem", "==", selectedSem)
+      );
+
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const resources = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setUploadedResources(resources);
+      }, (error) => {
+        handleFirestoreError(error, OperationType.LIST, "resources");
+      });
+
+      return () => unsubscribe();
+    }
+  }, [viewState, selectedDept, selectedSem]);
+
+  const handleLogin = async () => {
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (error) {
+      console.error("Login failed:", error);
+    }
+  };
+
+  const handleFileUpload = async (file: File, type: "notes" | "pyqs", unit?: number) => {
+    if (!isAdmin || !user || !selectedDept || !selectedSem || !activeSubject) {
+      console.error("Upload aborted: Missing admin status or context", { isAdmin, user, selectedDept, selectedSem, activeSubject });
+      return;
+    }
+
+    console.log("Starting upload process via proxy...", { fileName: file.name, type, unit });
+    setUploading(true);
+    
+    try {
+      const fileName = `${Date.now()}-${file.name}`;
+      const storagePath = `resources/${selectedDept}/${selectedSem}/${activeSubject}/${type}/${unit ? 'unit-' + unit : 'pyq'}/${fileName}`;
+      
+      console.log("Storage Path:", storagePath);
+      
+      // Use the server-side proxy
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("path", storagePath);
+
+      const response = await fetch("/api/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        let errorMessage = `Upload failed with status ${response.status}`;
+        try {
+          const contentType = response.headers.get("content-type");
+          if (contentType && contentType.includes("application/json")) {
+            const errorData = await response.json();
+            errorMessage = errorData.message || errorData.error || errorMessage;
+            if (errorData.action) {
+              errorMessage += `\n\nAction required: ${errorData.action}`;
+            }
+          } else {
+            const text = await response.text();
+            console.error("Non-JSON error from server:", text.substring(0, 500));
+            errorMessage += ". The server returned an unexpected format (likely HTML).";
+          }
+        } catch (e) {
+          errorMessage += ". Could not parse error details.";
+        }
+        throw new Error(errorMessage);
+      }
+
+      const jsonResponse = await response.json().catch(async (e) => {
+        console.error("Failed to parse success response:", e);
+        throw new Error("Upload seemed to succeed but returned invalid response format.");
+      });
+      
+      const downloadURL = jsonResponse.url;
+      console.log("Upload successful, URL:", downloadURL);
+
+      const resourceData: any = {
+        branch: selectedDept,
+        sem: selectedSem,
+        subjectCode: activeSubject,
+        type: type,
+        title: `${type === 'notes' ? 'Unit ' + unit : 'Previous Year Question'} - ${file.name}`,
+        fileUrl: downloadURL,
+        uploadedAt: serverTimestamp(),
+        uploadedBy: user.uid
+      };
+
+      if (type === "notes") resourceData.unit = unit;
+      if (type === "pyqs") resourceData.year = new Date().getFullYear();
+
+      console.log("Saving metadata to Firestore...", resourceData);
+      await addDoc(collection(db, "resources"), resourceData);
+      alert("Resource uploaded successfully!");
+    } catch (error) {
+      console.error("Upload failure:", error);
+      alert(`Failed to upload: ${error instanceof Error ? error.message : "Check console for details."}`);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      setViewState("year-selection");
+    } catch (error) {
+      console.error("Logout failed:", error);
+    }
+  };
 
   const years = [
     { id: 1, label: "1st Year" },
@@ -165,7 +341,7 @@ export default function App() {
           {[1, 2].map((sem) => (
             <motion.button
               key={sem}
-              onClick={() => { setSelectedSem(sem); setViewState("syllabus-view"); }}
+              onClick={() => { setSelectedSem(sem); setViewState("choice-selection"); }}
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               className="group relative h-64 rounded-[3rem] bg-neutral-900 border border-neutral-800 overflow-hidden flex flex-col justify-end p-10 hover:border-orange-500/50 transition-all"
@@ -187,6 +363,375 @@ export default function App() {
     </div>
   );
 
+  const renderChoiceSelection = () => (
+    <div className="min-h-screen bg-[#fafaf9] flex items-center justify-center p-8">
+      <div className="max-w-2xl w-full space-y-12">
+        <button onClick={() => setViewState("sem-selection")} className="flex items-center gap-2 text-neutral-400 hover:text-black transition-colors font-bold uppercase tracking-widest text-xs">
+          <ArrowLeft size={16} /> Back to Semesters
+        </button>
+
+        <div className="text-center space-y-4">
+          <span className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-500">{selectedDept} // SEM 0{selectedSem}</span>
+          <h2 className="text-5xl font-bold tracking-tight text-neutral-900">What are you looking for?</h2>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <motion.button
+            whileHover={{ y: -5 }}
+            onClick={() => setViewState("syllabus-view")}
+            className="group p-10 rounded-[2.5rem] bg-white border border-neutral-100 shadow-sm hover:shadow-xl hover:shadow-orange-100 hover:border-orange-200 transition-all text-center space-y-6"
+          >
+            <div className="w-16 h-16 mx-auto rounded-3xl bg-orange-50 flex items-center justify-center text-orange-500 group-hover:bg-orange-500 group-hover:text-white transition-colors">
+              <FileText size={32} />
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-2xl font-bold">Syllabus Copy</h3>
+              <p className="text-sm text-neutral-400 font-light">Structure, subjects, and credits for this semester.</p>
+            </div>
+          </motion.button>
+
+          <motion.button
+            whileHover={{ y: -5 }}
+            onClick={() => setViewState("resources-view")}
+            className="group p-10 rounded-[2.5rem] bg-white border border-neutral-100 shadow-sm hover:shadow-xl hover:shadow-blue-100 hover:border-blue-200 transition-all text-center space-y-6"
+          >
+            <div className="w-16 h-16 mx-auto rounded-3xl bg-blue-50 flex items-center justify-center text-blue-500 group-hover:bg-blue-500 group-hover:text-white transition-colors">
+              <Layers size={32} />
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-2xl font-bold">View Resources</h3>
+              <p className="text-sm text-neutral-400 font-light">Unit-wise notes, previous year questions, and study material.</p>
+            </div>
+          </motion.button>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderResourcesView = () => {
+    const subjects = SYLLABUS_MAP[selectedDept || ""]?.[selectedSem || 1] || [];
+    const activeSubjectData = activeSubject ? SUBJECT_DETAILS[activeSubject] : null;
+
+    return (
+      <div className="min-h-screen bg-[#fafaf9] overflow-y-auto pb-24">
+        <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-xl border-b border-neutral-100 p-6">
+          <div className="max-w-6xl mx-auto flex justify-between items-center">
+            <button onClick={() => { setViewState("choice-selection"); setActiveSubject(null); }} className="flex items-center gap-2 text-neutral-400 hover:text-black transition-colors font-bold uppercase tracking-widest text-xs">
+              <ArrowLeft size={16} /> Back to Choice
+            </button>
+            <div className="hidden md:flex flex-col items-center">
+              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-500">{selectedDept}</span>
+              <span className="text-sm font-bold text-neutral-900">Branch Resources // SEM 0{selectedSem}</span>
+            </div>
+            <div className="w-20" />
+          </div>
+        </header>
+
+        <div className="max-w-6xl mx-auto p-8 pt-16 space-y-12">
+          {!activeSubject && (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {subjects.map((subject, index) => (
+                <motion.button
+                  key={subject.code}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: index * 0.05 }}
+                  onClick={() => { setActiveSubject(subject.code); setResourceTab("notes"); }}
+                  whileHover={{ y: -5 }}
+                  className="p-8 rounded-[2rem] bg-white border border-neutral-100 shadow-sm hover:shadow-xl hover:border-orange-500/20 transition-all text-left flex flex-col justify-between h-64 group"
+                >
+                  <div className="space-y-4">
+                    <div className="w-12 h-12 rounded-2xl bg-neutral-50 flex items-center justify-center text-neutral-400 group-hover:bg-orange-50 group-hover:text-orange-500 transition-colors">
+                      <BookOpen size={24} />
+                    </div>
+                    <h3 className="text-xl font-bold text-neutral-800 leading-tight group-hover:text-black transition-colors line-clamp-2">{subject.title}</h3>
+                  </div>
+                  <div className="flex justify-between items-center pt-4 border-t border-neutral-50">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-neutral-400">{subject.code}</span>
+                    <span className="text-xs font-bold text-orange-500 flex items-center gap-1">Get Notes <ChevronRight size={14} /></span>
+                  </div>
+                </motion.button>
+              ))}
+            </div>
+          )}
+
+          {activeSubject && activeSubjectData && (
+            <div className="space-y-12">
+              <div className="flex flex-col md:flex-row md:items-end justify-between gap-8">
+                <div className="space-y-2">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-orange-500">{activeSubject}</span>
+                  <h2 className="text-4xl md:text-5xl font-bold tracking-tight">{activeSubjectData.title}</h2>
+                </div>
+                <div className="flex bg-neutral-100 p-1.5 rounded-2xl">
+                  <button 
+                    onClick={() => setResourceTab("notes")}
+                    className={`px-8 py-3 rounded-xl text-sm font-bold transition-all ${resourceTab === "notes" ? "bg-white text-black shadow-sm" : "text-neutral-500 hover:text-neutral-700"}`}
+                  >
+                    Notes
+                  </button>
+                  <button 
+                    onClick={() => setResourceTab("pyqs")}
+                    className={`px-8 py-3 rounded-xl text-sm font-bold transition-all ${resourceTab === "pyqs" ? "bg-white text-black shadow-sm" : "text-neutral-500 hover:text-neutral-700"}`}
+                  >
+                    PYQs
+                  </button>
+                </div>
+              </div>
+
+              {resourceTab === "notes" && (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                  <div className="space-y-4">
+                    {activeSubjectData.units.map((unit, index) => (
+                      <motion.button
+                        key={index}
+                        onClick={() => setExpandedUnit(expandedUnit === index ? null : index)}
+                        className={`w-full p-8 rounded-[2rem] border transition-all text-left group flex items-center justify-between ${expandedUnit === index ? "bg-[#0a0a0a] text-white border-black" : "bg-white border-neutral-100 hover:border-orange-500/30"}`}
+                      >
+                        <div className="flex items-center gap-6">
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-xs ${expandedUnit === index ? "bg-orange-500 text-white" : "bg-neutral-50 text-neutral-400 group-hover:bg-orange-50 group-hover:text-orange-500"}`}>
+                            0{index + 1}
+                          </div>
+                          <div>
+                            <span className={`block text-xs font-bold uppercase tracking-widest mb-1 ${expandedUnit === index ? "text-neutral-500" : "text-neutral-400"}`}>Unit</span>
+                            <span className="text-lg font-bold">{unit.title.split(": ")[1] || unit.title}</span>
+                          </div>
+                        </div>
+                        <ChevronRight className={`transition-transform duration-300 ${expandedUnit === index ? "rotate-90 text-orange-500" : "text-neutral-300"}`} />
+                      </motion.button>
+                    ))}
+                  </div>
+
+                  <div className="relative">
+                    {expandedUnit !== null ? (
+                      <div className="bg-white rounded-[2.5rem] border border-neutral-100 shadow-xl overflow-hidden h-[600px] flex flex-col sticky top-32">
+                        <div className="p-8 border-b border-neutral-50 bg-neutral-50/50 flex justify-between items-center">
+                          <h4 className="font-bold">Unit 0{expandedUnit + 1} Preview</h4>
+                          <div className="flex items-center gap-2">
+                            {uploadedResources.find(r => r.subjectCode === activeSubject && r.type === "notes" && r.unit === expandedUnit + 1) ? (
+                              <>
+                                <button 
+                                  onClick={() => setIsFullscreen(true)}
+                                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-neutral-800 text-white text-xs font-bold hover:bg-neutral-900 transition-colors"
+                                >
+                                  <Maximize2 size={14} /> Full Screen
+                                </button>
+                                <a 
+                                  href={uploadedResources.find(r => r.subjectCode === activeSubject && r.type === "notes" && r.unit === expandedUnit + 1).fileUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-orange-500 text-white text-xs font-bold hover:bg-orange-600 transition-colors"
+                                >
+                                  <Download size={14} /> Download PDF
+                                </a>
+                              </>
+                            ) : (
+                              <button disabled className="flex items-center gap-2 px-4 py-2 rounded-xl bg-neutral-200 text-neutral-400 text-xs font-bold cursor-not-allowed">
+                                <Download size={14} /> No File
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex-1 p-10 overflow-y-auto space-y-6">
+                            {uploadedResources.find(r => r.subjectCode === activeSubject && r.type === "notes" && r.unit === expandedUnit + 1) ? (
+                              <div className="h-full flex flex-col">
+                                <div className="p-6 bg-orange-50 rounded-2xl mb-6 relative group/info">
+                                  <h5 className="font-bold text-orange-900 mb-1">{uploadedResources.find(r => r.subjectCode === activeSubject && r.type === "notes" && r.unit === expandedUnit + 1).title}</h5>
+                                  <p className="text-xs text-orange-700/70">Resource available for viewing.</p>
+                                  {isAdmin && (
+                                    <button 
+                                      onClick={async () => {
+                                        if(confirm("Delete this resource?")) {
+                                          const res = uploadedResources.find(r => r.subjectCode === activeSubject && r.type === "notes" && r.unit === expandedUnit + 1);
+                                          await deleteDoc(doc(db, "resources", res.id));
+                                        }
+                                      }}
+                                      className="absolute top-6 right-6 p-2 rounded-lg bg-white/50 text-red-500 opacity-0 group-hover/info:opacity-100 transition-all hover:bg-red-50"
+                                    >
+                                      <Trash2 size={16} />
+                                    </button>
+                                  )}
+                                </div>
+                                <iframe 
+                                  src={`https://docs.google.com/viewer?url=${encodeURIComponent(uploadedResources.find(r => r.subjectCode === activeSubject && r.type === "notes" && r.unit === expandedUnit + 1).fileUrl)}&embedded=true`} 
+                                  className="w-full flex-1 rounded-xl border border-neutral-100 h-full"
+                                  title="Notes Preview"
+                                />
+                              </div>
+                            ) : isAdmin ? (
+                              <div className="flex flex-col items-center justify-center h-full text-center space-y-6 border-4 border-dashed border-orange-100 rounded-[2.5rem]">
+                                <div className="w-20 h-20 rounded-full bg-orange-50 flex items-center justify-center text-orange-500">
+                                  <Plus size={40} />
+                                </div>
+                                <div className="space-y-2">
+                                  <p className="font-bold text-neutral-800 text-xl">Upload Unit {expandedUnit + 1} Notes</p>
+                                  <p className="text-sm text-neutral-400 max-w-xs mx-auto">As an administrator, you can upload the specific notes for this unit here.</p>
+                                </div>
+                                <input 
+                                  type="file" 
+                                  id={`upload-unit-${expandedUnit}`}
+                                  className="hidden"
+                                  accept=".pdf,.doc,.docx"
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) handleFileUpload(file, "notes", expandedUnit + 1);
+                                  }}
+                                />
+                                <label 
+                                  htmlFor={`upload-unit-${expandedUnit}`}
+                                  className={`px-8 py-4 rounded-2xl bg-neutral-900 text-white font-bold text-sm cursor-pointer hover:bg-black transition-all flex items-center gap-2 ${uploading ? 'opacity-50 pointer-events-none' : ''}`}
+                                >
+                                  {uploading ? <Sparkles size={18} className="animate-spin" /> : <FileText size={18} />}
+                                  {uploading ? 'Uploading...' : 'Select File from Device'}
+                                </label>
+                              </div>
+                            ) : (
+                              <div className="flex flex-col items-center justify-center h-full text-center space-y-4">
+                                <div className="w-20 h-20 rounded-full bg-neutral-50 flex items-center justify-center text-neutral-200">
+                                  <FileText size={40} />
+                                </div>
+                                <div className="space-y-1">
+                                  <p className="font-bold text-neutral-800">No notes yet</p>
+                                  <p className="text-sm text-neutral-400 max-w-xs">Admin hasn't uploaded the notes for this unit yet.</p>
+                                </div>
+                              </div>
+                            )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="h-full min-h-[400px] rounded-[2.5rem] border-4 border-dashed border-neutral-100 flex flex-col items-center justify-center p-12 text-center space-y-6">
+                        <div className="w-16 h-16 rounded-[2rem] bg-neutral-50 flex items-center justify-center text-neutral-200"><Layers size={32} /></div>
+                        <div className="space-y-2">
+                          <p className="text-sm font-bold text-neutral-400 uppercase tracking-widest">Select a Unit</p>
+                          <p className="text-xs text-neutral-300">Click on a unit to preview the notes and download the resources.</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {resourceTab === "pyqs" && (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {isAdmin && (
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className="p-8 rounded-[2rem] bg-white border-4 border-dashed border-blue-100 flex flex-col items-center justify-center text-center space-y-4 group hover:border-blue-500 transition-all"
+                    >
+                      <input 
+                        type="file" 
+                        id="upload-pyq"
+                        className="hidden"
+                        accept=".pdf,.doc,.docx"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) handleFileUpload(file, "pyqs");
+                        }}
+                      />
+                      <label 
+                        htmlFor="upload-pyq"
+                        className="w-16 h-16 rounded-3xl bg-blue-50 text-blue-500 flex items-center justify-center cursor-pointer group-hover:bg-blue-500 group-hover:text-white transition-all"
+                      >
+                        <Plus size={32} />
+                      </label>
+                      <div className="space-y-1">
+                        <p className="font-bold text-neutral-800">Upload PYQ</p>
+                        <p className="text-xs text-neutral-400">Add previous year questions</p>
+                      </div>
+                    </motion.div>
+                  )}
+                  {uploadedResources.filter(r => r.subjectCode === activeSubject && r.type === "pyqs").length > 0 ? (
+                    uploadedResources.filter(r => r.subjectCode === activeSubject && r.type === "pyqs").map((res) => (
+                      <motion.div
+                        key={res.id}
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        className="p-8 rounded-[2rem] bg-white border border-neutral-100 shadow-sm hover:shadow-lg transition-all group hover:border-blue-200 relative"
+                      >
+                        {isAdmin && (
+                          <button 
+                            onClick={async () => {
+                              if(confirm("Delete this PYQ?")) {
+                                await deleteDoc(doc(db, "resources", res.id));
+                              }
+                            }}
+                            className="absolute top-6 right-6 p-2 rounded-lg bg-neutral-50 text-red-500 opacity-0 group-hover:opacity-100 transition-all hover:bg-red-50"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        )}
+                        <div className="flex justify-between items-start mb-6">
+                          <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-500 flex items-center justify-center">
+                            <Clock size={24} />
+                          </div>
+                          <a 
+                            href={res.fileUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-neutral-300 hover:text-blue-500 transition-colors"
+                          >
+                            <Download size={20} />
+                          </a>
+                        </div>
+                        <div className="space-y-1">
+                          <h3 className="text-xl font-bold">{res.title}</h3>
+                          <p className="text-xs text-neutral-400 uppercase tracking-widest">{res.year} Paper</p>
+                        </div>
+                      </motion.div>
+                    ))
+                  ) : (
+                    <div className="col-span-full py-20 text-center space-y-4">
+                      <div className="w-16 h-16 mx-auto rounded-full bg-neutral-50 flex items-center justify-center text-neutral-200">
+                        <Clock size={32} />
+                      </div>
+                      <p className="text-neutral-400 font-medium tracking-tight">No PYQs uploaded for this subject yet.</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const renderFooter = () => (
+    <footer className="bg-white border-t border-neutral-100 py-12 px-8">
+      <div className="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-8">
+        <div className="space-y-2 text-center md:text-left">
+          <h2 className="text-xl font-black tracking-tighter">ZERO2ONE</h2>
+          <p className="text-xs text-neutral-400 font-medium">Empowering Anurag University Students</p>
+        </div>
+        <div className="flex items-center gap-6">
+          {user ? (
+            <div className="flex items-center gap-4">
+              <div className="flex flex-col items-end">
+                <span className="text-xs font-bold text-neutral-900">{user.displayName}</span>
+                {isAdmin && <span className="text-[9px] font-black uppercase text-orange-500 tracking-widest">Administrator</span>}
+              </div>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={handleLogout}
+                  className="p-2 rounded-full bg-neutral-50 text-neutral-400 hover:bg-red-50 hover:text-red-500 transition-all border border-transparent hover:border-red-100"
+                >
+                  <LogOut size={18} />
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button 
+              onClick={handleLogin}
+              className="flex items-center gap-2 px-6 py-2.5 rounded-full bg-neutral-900 text-white text-xs font-bold hover:bg-black transition-all hover:scale-105 active:scale-95"
+            >
+              <Shield size={14} /> Admin Access
+            </button>
+          )}
+        </div>
+      </div>
+    </footer>
+  );
+
   const renderSyllabusView = () => {
     const subjects = SYLLABUS_MAP[selectedDept || ""]?.[selectedSem || 1] || [];
     const activeSubjectData = activeSubject ? SUBJECT_DETAILS[activeSubject] : null;
@@ -195,8 +740,8 @@ export default function App() {
       <div className="min-h-screen bg-[#fafaf9] overflow-y-auto pb-24">
         <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-xl border-b border-neutral-100 p-6">
           <div className="max-w-6xl mx-auto flex justify-between items-center">
-            <button onClick={() => setViewState("sem-selection")} className="flex items-center gap-2 text-neutral-400 hover:text-black transition-colors font-bold uppercase tracking-widest text-xs">
-              <ArrowLeft size={16} /> Change Semester
+            <button onClick={() => setViewState("choice-selection")} className="flex items-center gap-2 text-neutral-400 hover:text-black transition-colors font-bold uppercase tracking-widest text-xs">
+              <ArrowLeft size={16} /> Back to Choice
             </button>
             <div className="hidden md:flex flex-col items-center">
               <span className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-500">{selectedDept}</span>
@@ -308,9 +853,62 @@ export default function App() {
             {renderSemSelection()}
           </motion.div>
         )}
+        {viewState === "choice-selection" && (
+          <motion.div key="choice" initial={{ opacity: 0, y: 50 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+            {renderChoiceSelection()}
+          </motion.div>
+        )}
         {viewState === "syllabus-view" && (
           <motion.div key="view" initial={{ opacity: 0, y: 100 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
             {renderSyllabusView()}
+          </motion.div>
+        )}
+        {viewState === "resources-view" && (
+          <motion.div key="resources" initial={{ opacity: 0, y: 50 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+            {renderResourcesView()}
+          </motion.div>
+        )}
+      </AnimatePresence>
+      {renderFooter()}
+
+      {/* Fullscreen Document Viewer Overlay */}
+      <AnimatePresence>
+        {isFullscreen && uploadedResources.find(r => r.subjectCode === activeSubject && r.type === "notes" && r.unit === expandedUnit! + 1) && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[9999] bg-neutral-900 flex flex-col"
+          >
+            <div className="p-4 bg-neutral-800 flex justify-between items-center text-white px-8">
+              <div className="flex flex-col">
+                <span className="text-[10px] text-orange-400 font-bold uppercase tracking-widest">{activeSubject}</span>
+                <h2 className="font-bold">Unit {expandedUnit! + 1} PDF Viewer</h2>
+              </div>
+              <div className="flex items-center gap-4">
+                <a 
+                  href={uploadedResources.find(r => r.subjectCode === activeSubject && r.type === "notes" && r.unit === expandedUnit! + 1).fileUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-orange-500 text-white text-xs font-bold hover:bg-orange-600 transition-colors"
+                >
+                  <Download size={14} /> Download
+                </a>
+                <button 
+                  onClick={() => setIsFullscreen(false)}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition-all"
+                >
+                  <Minimize2 size={16} /> Exit Full Screen
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 bg-white">
+              <iframe 
+                src={`https://docs.google.com/viewer?url=${encodeURIComponent(uploadedResources.find(r => r.subjectCode === activeSubject && r.type === "notes" && r.unit === expandedUnit! + 1).fileUrl)}&embedded=true`} 
+                className="w-full h-full border-none"
+                title="Fullscreen Viewer"
+              />
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

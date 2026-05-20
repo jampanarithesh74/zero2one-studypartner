@@ -1,0 +1,83 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    function isBootstrappableAdmin() {
+      return isEmailVerified() && request.auth.token.email in [
+        'jampanarithesh74@gmail.com',
+        'jampanapadmaja7474@gmail.com',
+        '25eg112c49@anurag.edu.in'
+      ];
+    }
+
+    // Entity Validations
+    function isValidAdmin(admin) {
+      return admin.keys().hasAll(['email', 'addedAt']) && 
+             admin.keys().size() == 2 &&
+             admin.email is string && admin.email.size() <= 200 &&
+             admin.addedAt == request.time &&
+             admin.email == request.auth.token.email;
+    }
+
+    function isValidResource(res) {
+      return res.keys().hasAll(['branch', 'sem', 'subjectCode', 'type', 'title', 'fileUrl', 'uploadedAt', 'uploadedBy']) &&
+             res.keys().size() >= 8 && res.keys().size() <= 10 &&
+             res.branch is string && res.branch.size() <= 100 &&
+             res.sem is number &&
+             res.subjectCode is string && res.subjectCode.size() <= 50 &&
+             res.type is string && res.type in ['notes', 'pyqs'] &&
+             res.title is string && res.title.size() <= 500 &&
+             res.fileUrl is string && res.fileUrl.size() <= 2000 &&
+             res.uploadedAt == request.time &&
+             res.uploadedBy == request.auth.uid &&
+             (!('unit' in res) || res.unit is number) &&
+             (!('year' in res) || res.year is number);
+    }
+
+    // Collection Rules
+    match /admins/{uid} {
+      allow get: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+      allow create: if isSignedIn() && request.auth.uid == uid && (isBootstrappableAdmin() || isAdmin()) && isValidAdmin(incoming());
+      allow update: if isAdmin() && isValidAdmin(incoming()) && incoming().email == existing().email;
+      allow delete: if isAdmin();
+    }
+
+    match /resources/{resourceId} {
+      allow read: if true; // Publicly accessible
+      allow list: if true;
+
+      allow create: if isAdmin() && isValidResource(incoming());
+      allow update: if isAdmin() && isValidResource(incoming()) && incoming().uploadedBy == existing().uploadedBy;
+      allow delete: if isAdmin();
+    }
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "entities": {
+    "Admin": {
+      "title": "Admin",
+      "description": "Administrator of the platform",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "addedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "addedAt"]
+    },
+    "Resource": {
+      "title": "Resource",
+      "description": "Academic resource (notes or PYQs)",
+      "type": "object",
+      "properties": {
+        "branch": { "type": "string" },
+        "sem": { "type": "number" },
+        "subjectCode": { "type": "string" },
+        "type": { "type": "string" },
+        "title": { "type": "string" },
+        "fileUrl": { "type": "string" },
+        "uploadedAt": { "type": "string", "format": "date-time" },
+        "uploadedBy": { "type": "string" },
+        "unit": { "type": "number" },
+        "year": { "type": "number" }
+      },
+      "required": ["branch", "sem", "subjectCode", "type", "title", "fileUrl", "uploadedAt", "uploadedBy"]
+    }
+  },
+  "firestore": {
+    "admins/{uid}": {
+      "schema": "Admin",
+      "description": "Platform administrators"
+    },
+    "resources/{resourceId}": {
+      "schema": "Resource",
+      "description": "Academic resources collection"
+    }
+  }
+}
