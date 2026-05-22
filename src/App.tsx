@@ -22,6 +22,8 @@ export default function App() {
   const [resourceTab, setResourceTab] = useState<"notes" | "pyqs">("notes");
   const [expandedUnit, setExpandedUnit] = useState<number | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [iframeLoading, setIframeLoading] = useState<boolean>(false);
+  const [fullscreenIframeLoading, setFullscreenIframeLoading] = useState<boolean>(false);
 
   // Auth & Admin State
   const [user, setUser] = useState<User | null>(null);
@@ -44,6 +46,27 @@ export default function App() {
       document.body.style.overflow = 'unset';
     };
   }, [isFullscreen]);
+
+  const activeUnitNote = expandedUnit !== null 
+    ? uploadedResources.find(r => r.subjectCode === activeSubject && r.type === "notes" && r.unit === expandedUnit + 1)
+    : null;
+  const activeUnitNoteUrl = activeUnitNote?.fileUrl || "";
+
+  useEffect(() => {
+    if (activeUnitNoteUrl) {
+      setIframeLoading(true);
+    } else {
+      setIframeLoading(false);
+    }
+  }, [activeUnitNoteUrl, activeSubject, expandedUnit]);
+
+  useEffect(() => {
+    if (isFullscreen && activeUnitNoteUrl) {
+      setFullscreenIframeLoading(true);
+    } else {
+      setFullscreenIframeLoading(false);
+    }
+  }, [isFullscreen, activeUnitNoteUrl]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -837,12 +860,34 @@ export default function App() {
                                 )}
                               </div>
                               
-                              {/* Embedded Iframe Previewer */}
-                              <iframe 
-                                src={`https://docs.google.com/viewer?url=${encodeURIComponent(uploadedResources.find(r => r.subjectCode === activeSubject && r.type === "notes" && r.unit === expandedUnit + 1).fileUrl)}&embedded=true`} 
-                                className="w-full flex-1 rounded-xl border border-neutral-100 min-h-[220px]"
-                                title="Notes Preview"
-                              />
+                              {/* Embedded Iframe Previewer with Buffer Loader */}
+                              <div className="relative flex-1 w-full min-h-[225px] rounded-xl overflow-hidden border border-neutral-100 bg-white">
+                                {iframeLoading && (
+                                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/95 backdrop-blur-sm z-30 transition-all duration-300">
+                                    <div className="flex flex-col items-center space-y-4">
+                                      <div className="relative w-12 h-12">
+                                        <div className="absolute inset-0 rounded-full border-2 border-orange-500/10" />
+                                        <div className="absolute inset-0 rounded-full border-t-2 border-orange-500 animate-spin" />
+                                        <div className="absolute inset-2 rounded-full border-r-2 border-orange-400/40 animate-spin [animation-duration:1.5s]" />
+                                      </div>
+                                      <div className="text-center space-y-1 select-none">
+                                        <p className="text-xs font-extrabold tracking-widest text-neutral-900 uppercase">
+                                          Zero2One Previewer
+                                        </p>
+                                        <p className="text-[10px] text-neutral-400 font-medium font-sans animate-pulse">
+                                          Rendering secure PDF document...
+                                        </p>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                                <iframe 
+                                  src={`https://docs.google.com/viewer?url=${encodeURIComponent(uploadedResources.find(r => r.subjectCode === activeSubject && r.type === "notes" && r.unit === expandedUnit + 1).fileUrl)}&embedded=true`} 
+                                  className="w-full h-full min-h-[225px] border-none"
+                                  title="Notes Preview"
+                                  onLoad={() => setIframeLoading(false)}
+                                />
+                              </div>
                             </div>
                           ) : isAdmin ? (
                             /* Beautiful drop box for Administrator upload */
@@ -1430,11 +1475,31 @@ export default function App() {
                 </button>
               </div>
             </div>
-            <div className="flex-1 bg-white">
+            <div className="flex-1 bg-white relative">
+              {fullscreenIframeLoading && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-neutral-900/95 backdrop-blur-sm z-30 transition-all duration-300">
+                  <div className="flex flex-col items-center space-y-4">
+                    <div className="relative w-12 h-12">
+                      <div className="absolute inset-0 rounded-full border-2 border-orange-500/10" />
+                      <div className="absolute inset-0 rounded-full border-t-2 border-orange-500 animate-spin" />
+                      <div className="absolute inset-2 rounded-full border-r-2 border-orange-400/40 animate-spin [animation-duration:1.5s]" />
+                    </div>
+                    <div className="text-center space-y-1 select-none">
+                      <p className="text-xs font-extrabold tracking-widest text-white uppercase">
+                        Zero2One Previewer
+                      </p>
+                      <p className="text-[10px] text-neutral-400 font-medium font-sans animate-pulse">
+                        Rendering premium full screen view...
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
               <iframe 
                 src={`https://docs.google.com/viewer?url=${encodeURIComponent(uploadedResources.find(r => r.subjectCode === activeSubject && r.type === "notes" && r.unit === expandedUnit! + 1).fileUrl)}&embedded=true`} 
                 className="w-full h-full border-none"
                 title="Fullscreen Viewer"
+                onLoad={() => setFullscreenIframeLoading(false)}
               />
             </div>
           </motion.div>
