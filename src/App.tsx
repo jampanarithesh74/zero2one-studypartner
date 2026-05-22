@@ -4,7 +4,7 @@
  */
 
 import { motion, AnimatePresence } from "motion/react";
-import { ChevronRight, Sparkles, ArrowLeft, BookOpen, Clock, Award, FileText, Download, Layers, Shield, LogIn, LogOut, Plus, Trash2, Maximize2, Minimize2 } from "lucide-react";
+import { ChevronRight, Sparkles, ArrowLeft, BookOpen, Clock, Award, FileText, Download, Layers, Shield, LogIn, LogOut, Plus, Trash2, Maximize2, Minimize2, Instagram, ArrowUpRight } from "lucide-react";
 import { useState, useEffect, FormEvent } from "react";
 import { DEPARTMENTS, SYLLABUS_MAP, SUBJECT_DETAILS } from "./data/syllabus";
 import { auth, db, googleProvider, ALLOWED_ADMIN_EMAILS, handleFirestoreError, OperationType } from "./lib/firebase";
@@ -324,9 +324,15 @@ export default function App() {
 
           <div className="pt-6 md:pt-8 border-t border-neutral-100 flex flex-col sm:flex-row justify-between items-center gap-3 text-[10px] md:text-xs text-neutral-400 uppercase tracking-widest font-bold">
             <span>ZERO2ONE © 2026</span>
-            <div className="flex gap-6">
-              <a href="#" className="hover:text-black transition-colors underline decoration-neutral-200 underline-offset-4">Terms</a>
-              <a href="#" className="hover:text-black transition-colors underline decoration-neutral-200 underline-offset-4">Academic Help</a>
+            <div className="flex items-center gap-6">
+              <a href="https://www.instagram.com/zero2one.study/" target="_blank" rel="noreferrer" className="hover:text-black transition-colors flex items-center gap-0.5 group" aria-label="Instagram">
+                <Instagram size={15} className="md:w-[17px] md:h-[17px]" />
+                <ArrowUpRight size={10} className="text-neutral-400 group-hover:text-black group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform duration-200" />
+              </a>
+              <a href="mailto:zero2onestudypartner@gmail.com" className="hover:text-black transition-colors flex items-center gap-0.5 group underline decoration-neutral-200 underline-offset-4">
+                Academic Help
+                <ArrowUpRight size={10} className="text-neutral-400 group-hover:text-black group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform duration-200" />
+              </a>
             </div>
           </div>
         </motion.div>
