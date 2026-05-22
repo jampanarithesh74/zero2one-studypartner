@@ -1,20 +1,106 @@
+# ZERO2ONE StudyPartner
+
 <div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
+
+## 📚 Student Academic Resource Platform
+
+A clean, modern, mobile-first platform built to simplify exam preparation for students by organizing notes, PYQs, syllabus copies, and study resources in one place.
+
+🌐 **Live Website:**  
+https://zero2one-studypartner.vercel.app
+
+📷 **Instagram:**  
+https://www.instagram.com/zero2one.study/
+
+📩 **Contact:**  
+zero2onestudypartner@gmail.com
+
 </div>
 
-# Run and deploy your AI Studio app
+---
 
-This contains everything you need to run your app locally.
+# 🚀 Overview
 
-View your app in AI Studio: https://ai.studio/apps/69227a40-797c-44d3-ae5f-e41fc0f23313
+ZERO2ONE StudyPartner was created to solve a common student problem:
 
-## Run Locally
+> Searching through multiple WhatsApp groups, Google Drive links, Telegram channels, and scattered PDFs during exams.
 
-**Prerequisites:**  Node.js
+This platform centralizes academic resources into a single structured system with a clean and fast user experience optimized mainly for mobile devices.
 
+---
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+# ✨ Features
+
+## 📖 Academic Resources
+- Semester-wise organization
+- Department-wise navigation
+- Unit-wise notes
+- Syllabus copies
+- PYQs (Previous Year Questions)
+- Study material access
+
+---
+
+## 🎨 Modern UI/UX
+- Cinematic black & orange theme
+- Mobile-first responsive design
+- Smooth navigation
+- Minimal clutter
+- Premium modern interface
+- Optimized for quick exam preparation
+
+---
+
+## ⚡ Performance & Deployment
+- Hosted on Vercel
+- GitHub integrated CI/CD
+- Auto deployments enabled
+- Vercel Analytics integrated
+
+---
+
+## 🤝 Community Contributions
+Students can contribute:
+- Refined notes
+- Important PDFs
+- PYQs
+- Better study resources
+
+through:
+📩 zero2onestudypartner@gmail.com
+
+---
+
+# 🛠️ Tech Stack
+
+| Technology | Usage |
+|---|---|
+| React | Frontend Framework |
+| Tailwind CSS | Styling |
+| Firebase | Authentication / Backend Services |
+| Supabase | Database & Storage |
+| Vercel | Hosting & Deployment |
+| Git & GitHub | Version Control |
+
+---
+
+# 🧠 System Architecture
+
+```text
+                ┌────────────────────┐
+                │     Students       │
+                └─────────┬──────────┘
+                          │
+                          ▼
+                ┌────────────────────┐
+                │   React Frontend   │
+                │  (ZERO2ONE UI)     │
+                └─────────┬──────────┘
+                          │
+          ┌───────────────┼────────────────┐
+          │               │                │
+          ▼               ▼                ▼
+ ┌────────────────┐ ┌──────────────┐ ┌──────────────┐
+ │   Supabase     │ │  Firebase    │ │   Vercel     │
+ │ Storage/DB     │ │ Auth/Backend │ │ Deployment   │
+ └────────────────┘ └──────────────┘ └──────────────┘
