@@ -4,12 +4,12 @@
  */
 
 import { motion, AnimatePresence } from "motion/react";
-import { ChevronRight, Sparkles, ArrowLeft, BookOpen, Clock, Award, FileText, Download, Layers, Shield, LogIn, LogOut, Plus, Trash2, Maximize2, Minimize2, Instagram, ArrowUpRight } from "lucide-react";
+import { ChevronRight, Sparkles, ArrowLeft, BookOpen, Clock, Award, FileText, Download, Layers, Shield, LogIn, LogOut, Plus, Trash2, Maximize2, Minimize2, Instagram, ArrowUpRight, Edit2, ExternalLink } from "lucide-react";
 import { useState, useEffect, FormEvent } from "react";
 import { DEPARTMENTS, SYLLABUS_MAP, SUBJECT_DETAILS } from "./data/syllabus";
 import { auth, db, googleProvider, ALLOWED_ADMIN_EMAILS, handleFirestoreError, OperationType } from "./lib/firebase";
 import { onAuthStateChanged, signInWithPopup, signOut, User } from "firebase/auth";
-import { doc, getDoc, setDoc, collection, addDoc, query, where, onSnapshot, serverTimestamp, deleteDoc } from "firebase/firestore";
+import { doc, getDoc, setDoc, collection, addDoc, query, where, onSnapshot, serverTimestamp, deleteDoc, updateDoc } from "firebase/firestore";
 
 type ViewState = "year-selection" | "dept-selection" | "sem-selection" | "choice-selection" | "syllabus-view" | "resources-view";
 
@@ -35,6 +35,22 @@ export default function App() {
 
   // Admin Upload State
   const [uploading, setUploading] = useState(false);
+
+  // Slow PDF failure detection
+  const [showSlowPreviewNotice, setShowSlowPreviewNotice] = useState<boolean>(false);
+
+  // Admin Resource Form Modal state
+  const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
+  const [modalType, setModalType] = useState<"notes" | "pyqs">("notes");
+  const [modalUnit, setModalUnit] = useState<number | null>(null);
+  const [editingResource, setEditingResource] = useState<any | null>(null);
+
+  // Admin form fields
+  const [formTitle, setFormTitle] = useState("");
+  const [formDriveLink, setFormDriveLink] = useState("");
+  const [formFile, setFormFile] = useState<File | null>(null);
+  const [formYear, setFormYear] = useState<number>(new Date().getFullYear());
+  const [formError, setFormError] = useState("");
 
   useEffect(() => {
     if (isFullscreen) {
@@ -67,6 +83,21 @@ export default function App() {
       setFullscreenIframeLoading(false);
     }
   }, [isFullscreen, activeUnitNoteUrl]);
+
+  useEffect(() => {
+    let timer: any = null;
+    if (iframeLoading) {
+      setShowSlowPreviewNotice(false);
+      timer = setTimeout(() => {
+        setShowSlowPreviewNotice(true);
+      }, 7000); // 7 seconds timeout for sluggish viewer loads
+    } else {
+      setShowSlowPreviewNotice(false);
+    }
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [iframeLoading, activeSubject, expandedUnit]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -128,80 +159,125 @@ export default function App() {
     }
   };
 
-  const handleFileUpload = async (file: File, type: "notes" | "pyqs", unit?: number) => {
+  const handleSaveResource = async (e: FormEvent) => {
+    e.preventDefault();
     if (!isAdmin || !user || !selectedDept || !selectedSem || !activeSubject) {
-      console.error("Upload aborted: Missing admin status or context", { isAdmin, user, selectedDept, selectedSem, activeSubject });
+      setFormError("Missing required admin privileges or university subject context nodes.");
       return;
     }
 
-    console.log("Starting upload process via proxy...", { fileName: file.name, type, unit });
-    setUploading(true);
-    
-    try {
-      const fileName = `${Date.now()}-${file.name}`;
-      const storagePath = `resources/${selectedDept}/${selectedSem}/${activeSubject}/${type}/${unit ? 'unit-' + unit : 'pyq'}/${fileName}`;
-      
-      console.log("Storage Path:", storagePath);
-      
-      // Use the server-side proxy
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("path", storagePath);
+    // Validation
+    if (!formTitle.trim()) {
+      setFormError("A descriptive title is required for this resource package.");
+      return;
+    }
 
-      const response = await fetch("/api/upload", {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!response.ok) {
-        let errorMessage = `Upload failed with status ${response.status}`;
-        try {
-          const contentType = response.headers.get("content-type");
-          if (contentType && contentType.includes("application/json")) {
-            const errorData = await response.json();
-            errorMessage = errorData.message || errorData.error || errorMessage;
-            if (errorData.action) {
-              errorMessage += `\n\nAction required: ${errorData.action}`;
-            }
-          } else {
-            const text = await response.text();
-            console.error("Non-JSON error from server:", text.substring(0, 500));
-            errorMessage += ". The server returned an unexpected format (likely HTML).";
-          }
-        } catch (e) {
-          errorMessage += ". Could not parse error details.";
+    if (formDriveLink.trim()) {
+      // Validate drive link formatting recursively
+      try {
+        const url = new URL(formDriveLink.trim());
+        if (!url.hostname.includes("drive.google.com") && !url.hostname.includes("google.com")) {
+          setFormError("Please enter a valid Google Drive URL (drive.google.com).");
+          return;
         }
-        throw new Error(errorMessage);
+      } catch (err) {
+        setFormError("Please enter a valid Google Drive address URL starting with https://");
+        return;
+      }
+    }
+
+    // Either file or drive link must be present for a valid database object configuration
+    if (!formFile && !formDriveLink.trim() && (!editingResource || !editingResource.fileUrl)) {
+      setFormError("At least an uploaded PDF file OR a Google Drive backup link is required.");
+      return;
+    }
+
+    setUploading(true);
+    setFormError("");
+
+    try {
+      let downloadURL = editingResource?.fileUrl || "";
+
+      // Check if we need to upload a newly selected file from UI input
+      if (formFile) {
+        console.log("Starting secure PDF upload to Supabase storage bucket...", formFile.name);
+        const fileName = `${Date.now()}-${formFile.name}`;
+        const finalUnit = modalType === "notes" ? (modalUnit || 1) : null;
+        const storagePath = `resources/${selectedDept}/${selectedSem}/${activeSubject}/${modalType}/${finalUnit ? 'unit-' + finalUnit : 'pyq'}/${fileName}`;
+        
+        console.log("Target Supabase Node Path:", storagePath);
+        
+        const formData = new FormData();
+        formData.append("file", formFile);
+        formData.append("path", storagePath);
+
+        const response = await fetch("/api/upload", {
+          method: "POST",
+          body: formData,
+        });
+
+        if (!response.ok) {
+          let errorMessage = "Vercel server-proxy upload failed.";
+          try {
+            const errJson = await response.json();
+            errorMessage = errJson.message || errJson.error || errorMessage;
+          } catch(e) {}
+          throw new Error(errorMessage);
+        }
+
+        const jsonResponse = await response.json();
+        downloadURL = jsonResponse.url;
+        console.log("Upload completed, URL registered:", downloadURL);
       }
 
-      const jsonResponse = await response.json().catch(async (e) => {
-        console.error("Failed to parse success response:", e);
-        throw new Error("Upload seemed to succeed but returned invalid response format.");
-      });
-      
-      const downloadURL = jsonResponse.url;
-      console.log("Upload successful, URL:", downloadURL);
-
+      // Build target document payload
       const resourceData: any = {
         branch: selectedDept,
         sem: selectedSem,
         subjectCode: activeSubject,
-        type: type,
-        title: `${type === 'notes' ? 'Unit ' + unit : 'Previous Year Question'} - ${file.name}`,
+        type: modalType,
+        title: formTitle.trim(),
         fileUrl: downloadURL,
+        driveLink: formDriveLink.trim(),
         uploadedAt: serverTimestamp(),
         uploadedBy: user.uid
       };
 
-      if (type === "notes") resourceData.unit = unit;
-      if (type === "pyqs") resourceData.year = new Date().getFullYear();
+      if (modalType === "notes") {
+        resourceData.unit = modalUnit || 1;
+      } else {
+        resourceData.year = formYear;
+      }
 
-      console.log("Saving metadata to Firestore...", resourceData);
-      await addDoc(collection(db, "resources"), resourceData);
-      alert("Resource uploaded successfully!");
-    } catch (error) {
-      console.error("Upload failure:", error);
-      alert(`Failed to upload: ${error instanceof Error ? error.message : "Check console for details."}`);
+      if (editingResource?.id) {
+        // Edit and update flow (Requirement 4)
+        console.log("Performing metadata update on Firestore resource...", editingResource.id);
+        const updatedRef = doc(db, "resources", editingResource.id);
+        await updateDoc(updatedRef, {
+          title: resourceData.title,
+          fileUrl: resourceData.fileUrl,
+          driveLink: resourceData.driveLink,
+          ...(modalType === "notes" ? { unit: resourceData.unit } : { year: formYear }),
+          updatedAt: serverTimestamp(),
+          uploadedBy: user.uid
+        });
+        alert("Resource configurations updated successfully!");
+      } else {
+        // Fresh creation flow (Requirement 5)
+        console.log("Saving new resource metadata to Firestore...", resourceData);
+        await addDoc(collection(db, "resources"), resourceData);
+        alert("New resource published successfully!");
+      }
+
+      // Reset configurations and collapse admin drawer modal
+      setIsAdminModalOpen(false);
+      setFormTitle("");
+      setFormDriveLink("");
+      setFormFile(null);
+      setEditingResource(null);
+    } catch (error: any) {
+      console.error("Core save transaction failure:", error);
+      setFormError(error.message || "An unexpected error occurred while writing notes to database.");
     } finally {
       setUploading(false);
     }
@@ -805,136 +881,259 @@ export default function App() {
                   <div className="lg:col-span-7">
                     {expandedUnit !== null ? (
                       <div className="bg-white rounded-[24px] border border-neutral-100 shadow-md overflow-hidden h-[450px] md:h-[550px] flex flex-col sticky top-28">
-                        
-                        {/* Preview Topbar Header */}
-                        <div className="p-4 md:p-5 border-b border-neutral-100 bg-neutral-50/50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                                              {/* Preview Topbar Header */}
+                        <div className="p-4 md:p-5 border-b border-neutral-100 bg-neutral-50/50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 select-none">
                           <h4 className="text-xs md:text-sm font-extrabold text-neutral-900">
                             Unit 0{expandedUnit + 1} Notes Resource
                           </h4>
                           
                           <div className="flex items-center gap-2 w-full sm:w-auto">
-                            {uploadedResources.find(r => r.subjectCode === activeSubject && r.type === "notes" && r.unit === expandedUnit + 1) ? (
-                              <>
-                                <button 
-                                  onClick={() => setIsFullscreen(true)}
-                                  className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-neutral-100 hover:bg-neutral-205 text-neutral-700 text-xs font-bold transition-colors w-full sm:w-auto border border-neutral-200"
-                                >
-                                  <Maximize2 size={12} /> Full Screen
-                                </button>
-                                <a 
-                                  href={uploadedResources.find(r => r.subjectCode === activeSubject && r.type === "notes" && r.unit === expandedUnit + 1).fileUrl}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-orange-500 text-white text-xs font-bold hover:bg-orange-600 transition-colors shadow-sm w-full sm:w-auto"
-                                >
-                                  <Download size={12} /> Download PDF
-                                </a>
-                              </>
-                            ) : (
-                              <button disabled className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-neutral-100 text-neutral-305 text-xs font-bold cursor-not-allowed w-full sm:w-auto">
-                                <Download size={12} /> No File Attached
-                              </button>
-                            )}
+                            {(() => {
+                              const activeNote = uploadedResources.find(r => r.subjectCode === activeSubject && r.type === "notes" && r.unit === expandedUnit + 1);
+                              if (activeNote) {
+                                return (
+                                  <>
+                                    {activeNote.fileUrl && (
+                                      <>
+                                        <button 
+                                          onClick={() => setIsFullscreen(true)}
+                                          className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-neutral-100 hover:bg-neutral-200 text-neutral-750 text-xs font-bold transition-all border border-neutral-250 cursor-pointer shadow-sm active:scale-[0.98]"
+                                        >
+                                          <Maximize2 size={12} /> Full Screen
+                                        </button>
+                                        <a 
+                                          href={activeNote.fileUrl}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-orange-500 text-white text-xs font-bold hover:bg-orange-600 transition-all shadow-sm w-full sm:w-auto active:scale-[0.98]"
+                                        >
+                                          <Download size={12} /> Download PDF
+                                        </a>
+                                      </>
+                                    )}
+                                    {activeNote.driveLink && (
+                                      <a 
+                                        href={activeNote.driveLink}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-neutral-900 text-white text-xs font-bold hover:bg-black transition-all shadow-sm w-full sm:w-auto active:scale-[0.98]"
+                                      >
+                                        <ExternalLink size={12} /> Open Drive
+                                      </a>
+                                    )}
+                                  </>
+                                );
+                              } else {
+                                return (
+                                  <button disabled className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-neutral-100 text-neutral-400 text-xs font-bold cursor-not-allowed w-full sm:w-auto">
+                                    <Download size={12} /> No File Attached
+                                  </button>
+                                );
+                              }
+                            })()}
                           </div>
                         </div>
 
                         {/* Preview Body Area */}
                         <div className="flex-1 p-5 md:p-8 overflow-y-auto space-y-6">
-                          {uploadedResources.find(r => r.subjectCode === activeSubject && r.type === "notes" && r.unit === expandedUnit + 1) ? (
-                            <div className="h-full flex flex-col animate-fadeIn">
-                              {/* Metadata Banner with Delete for Admin */}
-                              <div className="px-5 py-4 bg-orange-500/10 border border-orange-500/20 rounded-2xl mb-4 relative group/info flex items-center justify-between gap-4">
-                                <div className="space-y-0.5">
-                                  <h5 className="font-extrabold text-orange-950 text-xs md:text-sm pr-6 leading-normal">
-                                    {uploadedResources.find(r => r.subjectCode === activeSubject && r.type === "notes" && r.unit === expandedUnit + 1).title}
-                                  </h5>
-                                  <p className="text-[10px] text-orange-700/80">Premium quality handwriting document ready for academic study.</p>
-                                </div>
-                                {isAdmin && (
-                                  <button 
-                                    onClick={async () => {
-                                      if(confirm("Delete this resource?")) {
-                                        const res = uploadedResources.find(r => r.subjectCode === activeSubject && r.type === "notes" && r.unit === expandedUnit + 1);
-                                        await deleteDoc(doc(db, "resources", res.id));
-                                      }
-                                    }}
-                                    className="p-1.5 rounded-lg bg-white/85 text-red-500 shadow-sm transition-all hover:bg-red-50 shrink-0 self-start animate-fadeIn"
-                                    title="Delete document"
-                                  >
-                                    <Trash2 size={13} />
-                                  </button>
-                                )}
-                              </div>
-                              
-                              {/* Embedded Iframe Previewer with Buffer Loader */}
-                              <div className="relative flex-1 w-full min-h-[225px] rounded-xl overflow-hidden border border-neutral-100 bg-white">
-                                {iframeLoading && (
-                                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/95 backdrop-blur-sm z-30 transition-all duration-300">
-                                    <div className="flex flex-col items-center space-y-4">
-                                      <div className="relative w-12 h-12">
-                                        <div className="absolute inset-0 rounded-full border-2 border-orange-500/10" />
-                                        <div className="absolute inset-0 rounded-full border-t-2 border-orange-500 animate-spin" />
-                                        <div className="absolute inset-2 rounded-full border-r-2 border-orange-400/40 animate-spin [animation-duration:1.5s]" />
-                                      </div>
-                                      <div className="text-center space-y-1 select-none">
-                                        <p className="text-xs font-extrabold tracking-widest text-neutral-900 uppercase">
-                                          Zero2One Previewer
-                                        </p>
-                                        <p className="text-[10px] text-neutral-400 font-medium font-sans animate-pulse">
-                                          Rendering secure PDF document...
-                                        </p>
-                                      </div>
+                          {(() => {
+                            const activeNote = uploadedResources.find(r => r.subjectCode === activeSubject && r.type === "notes" && r.unit === expandedUnit + 1);
+                            if (activeNote) {
+                              return (
+                                <div className="h-full flex flex-col animate-fadeIn">
+                                  {/* Metadata Banner with Edit/Delete for Admin */}
+                                  <div className="px-5 py-4 bg-orange-50/50 border border-orange-500/20 rounded-2xl mb-4 relative group/info flex items-center justify-between gap-4">
+                                    <div className="space-y-0.5 min-w-0">
+                                      <h5 className="font-extrabold text-orange-950 text-xs md:text-sm pr-6 leading-normal truncate">
+                                        {activeNote.title}
+                                      </h5>
+                                      <p className="text-[10px] text-orange-700/80">
+                                        {activeNote.driveLink ? "Dual delivery enabled: Google Drive + Supabase Cloud Server." : "Premium quality handwriting document ready for academic study."}
+                                      </p>
                                     </div>
+                                    
+                                    {isAdmin && (
+                                      <div className="flex items-center gap-1.5 shrink-0 self-start">
+                                        <button 
+                                          onClick={() => {
+                                            setEditingResource(activeNote);
+                                            setModalType("notes");
+                                            setModalUnit(expandedUnit + 1);
+                                            setFormTitle(activeNote.title);
+                                            setFormDriveLink(activeNote.driveLink || "");
+                                            setFormYear(new Date().getFullYear());
+                                            setFormFile(null);
+                                            setFormError("");
+                                            setIsAdminModalOpen(true);
+                                          }}
+                                          className="p-1.5 rounded-lg bg-white text-orange-600 shadow-sm border border-neutral-100 transition-all hover:bg-orange-50 cursor-pointer"
+                                          title="Edit details"
+                                        >
+                                          <Edit2 size={13} />
+                                        </button>
+                                        <button 
+                                          onClick={async () => {
+                                            if(confirm("Are you sure you want to delete this resource?")) {
+                                              await deleteDoc(doc(db, "resources", activeNote.id));
+                                            }
+                                          }}
+                                          className="p-1.5 rounded-lg bg-white text-red-500 shadow-sm border border-neutral-100 transition-all hover:bg-red-50 cursor-pointer"
+                                          title="Delete document"
+                                        >
+                                          <Trash2 size={13} />
+                                        </button>
+                                      </div>
+                                    )}
                                   </div>
-                                )}
-                                <iframe 
-                                  src={`https://docs.google.com/viewer?url=${encodeURIComponent(uploadedResources.find(r => r.subjectCode === activeSubject && r.type === "notes" && r.unit === expandedUnit + 1).fileUrl)}&embedded=true`} 
-                                  className="w-full h-full min-h-[225px] border-none"
-                                  title="Notes Preview"
-                                  onLoad={() => setIframeLoading(false)}
-                                />
-                              </div>
-                            </div>
-                          ) : isAdmin ? (
-                            /* Beautiful drop box for Administrator upload */
-                            <div className="flex flex-col items-center justify-center h-full text-center space-y-5 border-2 border-dashed border-neutral-200 bg-neutral-50/50 rounded-2xl p-6">
-                              <div className="w-12 h-12 rounded-2xl bg-orange-500/10 border border-orange-500/20 flex items-center justify-center text-orange-500 shadow-inner">
-                                <Plus size={24} />
-                              </div>
-                              <div className="space-y-1">
-                                <p className="font-extrabold text-neutral-800 text-sm">Upload Unit {expandedUnit + 1} Study Notes</p>
-                                <p className="text-xs text-neutral-400 max-w-xs mx-auto">Upload premium academic notes in PDF or Doc formatting for students.</p>
-                              </div>
-                              <input 
-                                type="file" 
-                                id={`upload-unit-${expandedUnit}`}
-                                className="hidden"
-                                accept=".pdf,.doc,.docx"
-                                onChange={(e) => {
-                                  const file = e.target.files?.[0];
-                                  if (file) handleFileUpload(file, "notes", expandedUnit + 1);
-                                }}
-                              />
-                              <label 
-                                htmlFor={`upload-unit-${expandedUnit}`}
-                                className={`px-5 py-2.5 rounded-full bg-neutral-900 hover:bg-black text-white text-xs font-bold cursor-pointer transition-all flex items-center gap-2 ${uploading ? 'opacity-50 pointer-events-none' : ''}`}
-                              >
-                                {uploading ? <Sparkles size={13} className="animate-spin" /> : <FileText size={13} />}
-                                {uploading ? 'Uploading notes...' : 'Select Study Document'}
-                              </label>
-                            </div>
-                          ) : (
-                            /* Students Empty view */
-                            <div className="flex flex-col items-center justify-center h-full text-center space-y-4">
-                              <div className="w-14 h-14 rounded-2xl bg-neutral-50 flex items-center justify-center text-neutral-300 shadow-inner">
-                                <FileText size={28} />
-                              </div>
-                              <div className="space-y-1">
-                                <p className="font-extrabold text-neutral-800 text-sm">No Notes Uploaded</p>
-                                <p className="text-xs text-neutral-400 max-w-xs mx-auto">This academic resource has not been uploaded by the course coordinator yet.</p>
-                              </div>
-                            </div>
-                          )}
+                                  
+                                  {/* Embedded Iframe Previewer with Buffer Loader */}
+                                  {activeNote.fileUrl ? (
+                                    <div className="relative flex-1 w-full min-h-[225px] rounded-xl overflow-hidden border border-neutral-100 bg-white">
+                                      {(iframeLoading || showSlowPreviewNotice) && (
+                                        <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/95 backdrop-blur-sm z-30 p-6 transition-all duration-300">
+                                          <div className="flex flex-col items-center space-y-4 max-w-xs text-center select-none">
+                                            {showSlowPreviewNotice ? (
+                                              <>
+                                                <div className="w-10 h-10 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center animate-bounce">
+                                                  <Sparkles size={18} />
+                                                </div>
+                                                <div className="space-y-1">
+                                                  <p className="text-xs font-black tracking-wider text-neutral-900 uppercase">
+                                                    PDF loading issues detected
+                                                  </p>
+                                                  <p className="text-[10px] text-neutral-500 leading-normal font-medium">
+                                                    The browser preview seems slow. You can jump directly to the backup Google Drive viewer.
+                                                  </p>
+                                                </div>
+                                                {activeNote.driveLink && (
+                                                  <a 
+                                                    href={activeNote.driveLink}
+                                                    target="_blank"
+                                                    rel="noreferrer"
+                                                    className="px-4 py-2.5 bg-neutral-900 hover:bg-black text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-1.5 cursor-pointer scale-95"
+                                                  >
+                                                    Open Backup on G-Drive <ArrowUpRight size={13} />
+                                                  </a>
+                                                )}
+                                              </>
+                                            ) : (
+                                              <>
+                                                <div className="relative w-12 h-12">
+                                                  <div className="absolute inset-0 rounded-full border-2 border-orange-500/10" />
+                                                  <div className="absolute inset-0 rounded-full border-t-2 border-orange-500 animate-spin" />
+                                                  <div className="absolute inset-2 rounded-full border-r-2 border-orange-400/40 animate-spin [animation-duration:1.5s]" />
+                                                </div>
+                                                <div className="space-y-1 select-none">
+                                                  <p className="text-xs font-extrabold tracking-widest text-neutral-900 uppercase">
+                                                    Zero2One Previewer
+                                                  </p>
+                                                  <p className="text-[10px] text-neutral-401 font-medium font-sans animate-pulse">
+                                                    Rendering secure PDF document...
+                                                  </p>
+                                                </div>
+                                              </>
+                                            )}
+                                          </div>
+                                        </div>
+                                      )}
+                                      <iframe 
+                                        src={`https://docs.google.com/viewer?url=${encodeURIComponent(activeNote.fileUrl)}&embedded=true`} 
+                                        className="w-full h-full min-h-[225px] border-none"
+                                        title="Notes Preview"
+                                        onLoad={() => setIframeLoading(false)}
+                                      />
+                                    </div>
+                                  ) : (
+                                    /* Direct Google Drive Display Card (If fileUrl is omitted & only Drive link is present for handwritten PDFs) */
+                                    <div className="flex-1 border-2 border-dashed border-orange-200 bg-orange-50/10 rounded-2xl p-6 flex flex-col items-center justify-center text-center space-y-4 animate-fadeIn">
+                                      <div className="w-14 h-14 rounded-2xl bg-orange-500/10 text-orange-600 flex items-center justify-center">
+                                        <Layers size={28} />
+                                      </div>
+                                      <div className="space-y-1.5 max-w-sm">
+                                        <p className="font-extrabold text-neutral-900 text-sm md:text-base leading-none">External Handwriting Notes</p>
+                                        <p className="text-xs text-neutral-550 leading-relaxed font-semibold">
+                                          This booklet of hand-written guidelines is hosted securely on Google Drive to manage data bandwidth limits.
+                                        </p>
+                                      </div>
+                                      {activeNote.driveLink ? (
+                                        <a 
+                                          href={activeNote.driveLink}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="px-6 py-3 bg-orange-500 hover:bg-orange-600 text-white font-black rounded-xl text-xs md:text-sm flex items-center gap-2 shadow-md transition-all active:scale-[0.98] cursor-pointer"
+                                        >
+                                          Open notes on Google Drive <ArrowUpRight size={14} />
+                                        </a>
+                                      ) : (
+                                        <p className="text-xs text-red-500 font-bold">Error: Connection links are missing.</p>
+                                      )}
+                                    </div>
+                                  )}
+
+                                  {/* Inline Falling Back Notice underneath PDF Viewer */}
+                                  {activeNote.driveLink && activeNote.fileUrl && (
+                                    <div className="mt-3 p-3 bg-neutral-50 rounded-xl border border-neutral-100 flex items-center justify-between gap-3 text-[10px] md:text-xs text-neutral-650 select-none animate-fadeIn transition-colors hover:bg-neutral-100">
+                                      <div className="flex items-center gap-2">
+                                        <div className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-pulse shrink-0" />
+                                        <span>Having trouble loading notes? Play via backup.</span>
+                                      </div>
+                                      <a 
+                                        href={activeNote.driveLink}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="text-orange-600 font-extrabold hover:text-orange-700 flex items-center gap-0.5 cursor-pointer"
+                                      >
+                                        Google Drive <ArrowUpRight size={12} />
+                                      </a>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            } else if (isAdmin) {
+                              return (
+                                /* Beautiful drop box for Administrator upload */
+                                <div className="flex flex-col items-center justify-center h-full text-center space-y-5 border-2 border-dashed border-neutral-200 bg-neutral-50/50 rounded-2xl p-6">
+                                  <div className="w-12 h-12 rounded-2xl bg-orange-500/10 border border-orange-500/20 flex items-center justify-center text-orange-500 shadow-inner">
+                                    <Plus size={24} />
+                                  </div>
+                                  <div className="space-y-1 select-none">
+                                    <p className="font-extrabold text-neutral-800 text-sm">Upload Unit {expandedUnit + 1} Study Notes</p>
+                                    <p className="text-xs text-neutral-400 max-w-xs mx-auto">Configure a PDF record and/or Google Drive alternative link.</p>
+                                  </div>
+                                  <button 
+                                    onClick={() => {
+                                      setEditingResource(null);
+                                      setModalType("notes");
+                                      setModalUnit(expandedUnit + 1);
+                                      setFormTitle(`Unit ${expandedUnit + 1} Notes - ${activeSubject}`);
+                                      setFormDriveLink("");
+                                      setFormYear(new Date().getFullYear());
+                                      setFormFile(null);
+                                      setFormError("");
+                                      setIsAdminModalOpen(true);
+                                    }}
+                                    className="px-5 py-2.5 rounded-full bg-neutral-900 hover:bg-black text-white text-xs font-bold cursor-pointer transition-all flex items-center gap-2 active:scale-95 shadow-sm"
+                                  >
+                                    <Plus size={13} />
+                                    Configure Notes
+                                  </button>
+                                </div>
+                              );
+                            } else {
+                              return (
+                                /* Students Empty view */
+                                <div className="flex flex-col items-center justify-center h-full text-center space-y-4">
+                                  <div className="w-14 h-14 rounded-2xl bg-neutral-50 flex items-center justify-center text-neutral-300 shadow-inner">
+                                    <FileText size={28} />
+                                  </div>
+                                  <div className="space-y-1 select-none">
+                                    <p className="font-extrabold text-neutral-800 text-sm">No Notes Uploaded</p>
+                                    <p className="text-xs text-neutral-400 max-w-xs mx-auto">This academic resource has not been uploaded by the course coordinator yet.</p>
+                                  </div>
+                                </div>
+                              );
+                            }
+                          })()}
                         </div>
 
                       </div>
@@ -963,32 +1162,32 @@ export default function App() {
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                    {/* Admin trigger to upload a new PYQ */}
+                     {/* Admin trigger to upload a new PYQ */}
                     {isAdmin && (
                       <motion.div
                         initial={{ opacity: 0, scale: 0.98 }}
                         animate={{ opacity: 1, scale: 1 }}
                         className="p-6 md:p-8 rounded-[24px] bg-neutral-50/50 border-2 border-dashed border-neutral-200 flex flex-col items-center justify-center text-center space-y-4 group hover:border-orange-500/30 transition-all min-h-[160px]"
                       >
-                        <input 
-                          type="file" 
-                          id="upload-pyq"
-                          className="hidden"
-                          accept=".pdf,.doc,.docx"
-                          onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (file) handleFileUpload(file, "pyqs");
+                        <button 
+                          onClick={() => {
+                            setEditingResource(null);
+                            setModalType("pyqs");
+                            setModalUnit(null);
+                            setFormTitle(`Previous Year Paper - ${activeSubject}`);
+                            setFormDriveLink("");
+                            setFormYear(new Date().getFullYear());
+                            setFormFile(null);
+                            setFormError("");
+                            setIsAdminModalOpen(true);
                           }}
-                        />
-                        <label 
-                          htmlFor="upload-pyq"
-                          className="w-10 h-10 rounded-xl bg-orange-500/10 text-orange-600 flex items-center justify-center cursor-pointer group-hover:bg-orange-500 group-hover:text-white transition-all shadow-sm"
+                          className="w-10 h-10 rounded-xl bg-orange-500/10 text-orange-600 flex items-center justify-center cursor-pointer hover:bg-orange-500 hover:text-white transition-all shadow-sm"
                         >
                           <Plus size={20} />
-                        </label>
-                        <div className="space-y-1">
+                        </button>
+                        <div className="space-y-1 select-none">
                           <p className="font-extrabold text-neutral-800 text-xs md:text-sm font-sans">Upload Exam Paper</p>
-                          <p className="text-[10px] text-neutral-400">Add official PYQ paper schema</p>
+                          <p className="text-[10px] text-neutral-400">Add official past and model PYQ exams</p>
                         </div>
                       </motion.div>
                     )}
@@ -1004,49 +1203,90 @@ export default function App() {
                           className="p-6 md:p-8 rounded-[24px] bg-white border border-neutral-100 shadow-sm hover:border-orange-500/30 transition-all group relative flex flex-col justify-between min-h-[160px]"
                         >
                           {isAdmin && (
-                            <button 
-                              onClick={async () => {
-                                if(confirm("Delete this PYQ?")) {
-                                  await deleteDoc(doc(db, "resources", res.id));
-                                }
-                              }}
-                              className="absolute top-5 right-5 p-1.5 rounded-lg bg-neutral-50 hover:bg-neutral-100 text-red-500 opacity-0 group-hover:opacity-100 transition-all shadow-inner shrink-0"
-                              title="Delete model paper"
-                            >
-                              <Trash2 size={13} />
-                            </button>
+                            <div className="absolute top-5 right-5 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                              <button 
+                                onClick={() => {
+                                  setEditingResource(res);
+                                  setModalType("pyqs");
+                                  setModalUnit(null);
+                                  setFormTitle(res.title);
+                                  setFormDriveLink(res.driveLink || "");
+                                  setFormYear(res.year || new Date().getFullYear());
+                                  setFormFile(null);
+                                  setFormError("");
+                                  setIsAdminModalOpen(true);
+                                }}
+                                className="p-1.5 rounded-lg bg-neutral-50 hover:bg-neutral-100 text-orange-600 shadow-inner cursor-pointer"
+                                title="Edit PYQ details"
+                              >
+                                <Edit2 size={13} />
+                              </button>
+                              <button 
+                                onClick={async () => {
+                                  if(confirm("Delete this PYQ?")) {
+                                    await deleteDoc(doc(db, "resources", res.id));
+                                  }
+                                }}
+                                className="p-1.5 rounded-lg bg-neutral-50 hover:bg-neutral-100 text-red-500 shadow-inner cursor-pointer"
+                                title="Delete model paper"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
                           )}
 
-                          <div className="flex justify-between items-start mb-4">
-                            <div className="w-10 h-10 rounded-xl bg-orange-500/10 text-orange-500 flex items-center justify-center text-orange-600">
+                          <div className="flex justify-between items-start mb-4 select-none">
+                            <div className="w-10 h-10 rounded-xl bg-orange-500/10 text-orange-550 flex items-center justify-center text-orange-600">
                               <Layers size={18} />
                             </div>
                             
-                            <a 
-                              href={res.fileUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="w-8 h-8 rounded-full bg-neutral-50 hover:bg-orange-500 hover:text-white hover:border-orange-400 border border-neutral-100 text-neutral-400 flex items-center justify-center shadow-sm transition-all"
-                              title="Download past paper"
-                            >
-                              <Download size={13} />
-                            </a>
+                            <div className="flex items-center gap-1.5">
+                              {res.fileUrl && (
+                                <a 
+                                  href={res.fileUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="w-8 h-8 rounded-full bg-neutral-50 hover:bg-orange-500 hover:text-white hover:border-orange-400 border border-neutral-100 text-neutral-400 flex items-center justify-center shadow-sm transition-all"
+                                  title="Download past paper"
+                                >
+                                  <Download size={13} />
+                                </a>
+                              )}
+                              {res.driveLink && (
+                                <a 
+                                  href={res.driveLink}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="w-8 h-8 rounded-full bg-neutral-900 hover:bg-black text-white hover:border-black border border-neutral-800 flex items-center justify-center shadow-sm transition-all"
+                                  title="Open in Google Drive"
+                                >
+                                  <ExternalLink size={13} />
+                                </a>
+                              )}
+                            </div>
                           </div>
 
                           <div className="space-y-1">
                             <h3 className="text-sm md:text-base font-extrabold text-neutral-905 tracking-tight leading-snug line-clamp-2">
                               {res.title}
                             </h3>
-                            <p className="text-[10px] text-neutral-400 font-extrabold uppercase tracking-wide font-mono">
-                              {res.year} Paper
-                            </p>
+                            <div className="flex items-center gap-2 select-none">
+                              <p className="text-[10px] text-neutral-450 font-extrabold uppercase tracking-wide font-mono">
+                                {res.year || "Past"} Paper
+                              </p>
+                              {res.driveLink && (
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[8px] font-black bg-orange-100 text-orange-900 uppercase tracking-widest leading-none">
+                                  Drive Backup
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </motion.div>
                       ))
                     ) : (
                       /* Empty state paper */
                       <div className="col-span-full py-16 text-center space-y-4 bg-white/20 select-none">
-                        <div className="w-14 h-14 mx-auto rounded-3xl bg-neutral-50 flex items-center justify-center text-neutral-200">
+                        <div className="w-14 h-14 mx-auto rounded-3xl bg-neutral-50 flex items-center justify-center text-neutral-200 animate-pulse">
                           <Layers size={26} />
                         </div>
                         <p className="text-neutral-400 text-xs md:text-sm font-light">
@@ -1452,63 +1692,284 @@ export default function App() {
 
       {/* Fullscreen Document Viewer Overlay */}
       <AnimatePresence>
-        {isFullscreen && uploadedResources.find(r => r.subjectCode === activeSubject && r.type === "notes" && r.unit === expandedUnit! + 1) && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[9999] bg-neutral-900 flex flex-col"
-          >
-            <div className="p-4 bg-neutral-800 flex justify-between items-center text-white px-8">
-              <div className="flex flex-col">
-                <span className="text-[10px] text-orange-400 font-bold uppercase tracking-widest">{activeSubject}</span>
-                <h2 className="font-bold">Unit {expandedUnit! + 1} PDF Viewer</h2>
-              </div>
-              <div className="flex items-center gap-4">
-                <a 
-                  href={uploadedResources.find(r => r.subjectCode === activeSubject && r.type === "notes" && r.unit === expandedUnit! + 1).fileUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-orange-500 text-white text-xs font-bold hover:bg-orange-600 transition-colors"
-                >
-                  <Download size={14} /> Download
-                </a>
-                <button 
-                  onClick={() => setIsFullscreen(false)}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition-all"
-                >
-                  <Minimize2 size={16} /> Exit Full Screen
-                </button>
-              </div>
-            </div>
-            <div className="flex-1 bg-white relative">
-              {fullscreenIframeLoading && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center bg-neutral-900/95 backdrop-blur-sm z-30 transition-all duration-300">
-                  <div className="flex flex-col items-center space-y-4">
-                    <div className="relative w-12 h-12">
-                      <div className="absolute inset-0 rounded-full border-2 border-orange-500/10" />
-                      <div className="absolute inset-0 rounded-full border-t-2 border-orange-500 animate-spin" />
-                      <div className="absolute inset-2 rounded-full border-r-2 border-orange-400/40 animate-spin [animation-duration:1.5s]" />
-                    </div>
-                    <div className="text-center space-y-1 select-none">
-                      <p className="text-xs font-extrabold tracking-widest text-white uppercase">
-                        Zero2One Previewer
-                      </p>
-                      <p className="text-[10px] text-neutral-400 font-medium font-sans animate-pulse">
-                        Rendering premium full screen view...
-                      </p>
-                    </div>
+        {isFullscreen && (() => {
+          const activeNote = uploadedResources.find(r => r.subjectCode === activeSubject && r.type === "notes" && r.unit === expandedUnit! + 1);
+          if (activeNote && activeNote.fileUrl) {
+            return (
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 z-[9999] bg-neutral-900 flex flex-col"
+              >
+                <div className="p-4 bg-neutral-800 flex justify-between items-center text-white px-8 select-none">
+                  <div className="flex flex-col min-w-0">
+                    <span className="text-[10px] text-orange-400 font-bold uppercase tracking-widest">{activeSubject}</span>
+                    <h2 className="font-bold truncate text-sm md:text-base">{activeNote.title}</h2>
+                  </div>
+                  <div className="flex items-center gap-2 md:gap-4 shrink-0">
+                    {activeNote.driveLink && (
+                      <a 
+                        href={activeNote.driveLink}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center gap-1.5 px-3 py-1.5 md:px-4 md:py-2 rounded-lg bg-neutral-900 text-white text-xs font-bold hover:bg-black transition-all border border-neutral-700 shadow-sm"
+                      >
+                        <ExternalLink size={14} /> Open Drive
+                      </a>
+                    )}
+                    <a 
+                      href={activeNote.fileUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex items-center gap-1.5 px-3 py-1.5 md:px-4 md:py-2 rounded-lg bg-orange-500 text-white text-xs font-bold hover:bg-orange-600 transition-all shadow-md"
+                    >
+                      <Download size={14} /> Download
+                    </a>
+                    <button 
+                      onClick={() => setIsFullscreen(false)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 md:px-4 md:py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition-all cursor-pointer"
+                    >
+                      <Minimize2 size={16} /> Exit
+                    </button>
                   </div>
                 </div>
-              )}
-              <iframe 
-                src={`https://docs.google.com/viewer?url=${encodeURIComponent(uploadedResources.find(r => r.subjectCode === activeSubject && r.type === "notes" && r.unit === expandedUnit! + 1).fileUrl)}&embedded=true`} 
-                className="w-full h-full border-none"
-                title="Fullscreen Viewer"
-                onLoad={() => setFullscreenIframeLoading(false)}
-              />
-            </div>
-          </motion.div>
+                <div className="flex-1 bg-white relative">
+                  {fullscreenIframeLoading && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-neutral-900/95 backdrop-blur-sm z-30 transition-all duration-300">
+                      <div className="flex flex-col items-center space-y-4">
+                        <div className="relative w-12 h-12">
+                          <div className="absolute inset-0 rounded-full border-2 border-orange-500/10" />
+                          <div className="absolute inset-0 rounded-full border-t-2 border-orange-500 animate-spin" />
+                          <div className="absolute inset-2 rounded-full border-r-2 border-orange-400/40 animate-spin [animation-duration:1.5s]" />
+                        </div>
+                        <div className="text-center space-y-1 select-none">
+                          <p className="text-xs font-extrabold tracking-widest text-white uppercase">
+                            Zero2One Previewer
+                          </p>
+                          <p className="text-[10px] text-neutral-400 font-medium font-sans animate-pulse">
+                            Rendering premium full screen view...
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  <iframe 
+                    src={`https://docs.google.com/viewer?url=${encodeURIComponent(activeNote.fileUrl)}&embedded=true`} 
+                    className="w-full h-full border-none"
+                    title="Fullscreen Viewer"
+                    onLoad={() => setFullscreenIframeLoading(false)}
+                  />
+                </div>
+              </motion.div>
+            );
+          }
+          return null;
+        })()}
+      </AnimatePresence>
+
+      {/* Centralized Academic Admin Config Modal */}
+      <AnimatePresence>
+        {isAdminModalOpen && (
+          <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4">
+            {/* Background glassmorphic layer */}
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                if(!uploading) {
+                  setIsAdminModalOpen(false);
+                  setEditingResource(null);
+                }
+              }}
+              className="absolute inset-0 bg-neutral-950/60 backdrop-blur-md"
+            />
+
+            {/* Modal Body card */}
+            <motion.div 
+              initial={{ scale: 0.95, y: 15, opacity: 0 }}
+              animate={{ scale: 1, y: 0, opacity: 1 }}
+              exit={{ scale: 0.95, y: 15, opacity: 0 }}
+              transition={{ type: "spring", duration: 0.35 }}
+              className="relative w-full max-w-lg bg-white rounded-[28px] border border-neutral-100 shadow-2xl p-6 md:p-8 overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              <div className="absolute top-0 left-0 w-32 h-32 bg-orange-500/5 rounded-full filter blur-xl -translate-x-12 -translate-y-12" />
+              
+              <div className="relative flex justify-between items-start pb-5 border-b border-neutral-100 select-none mb-6">
+                <div>
+                  <span className="text-[9px] font-black uppercase text-orange-600 tracking-widest block mb-0.5">
+                    {editingResource ? "Update Configuration" : "Add Resource Workspace"}
+                  </span>
+                  <h3 className="text-base md:text-lg font-black text-neutral-900 font-sans tracking-tight leading-none">
+                    {editingResource ? `Edit: ${editingResource.title.split(" - ")[0]}` : `Publish ${modalType === 'notes' ? 'Unit notes' : 'Past Exams'}`}
+                  </h3>
+                  <p className="text-[10px] text-neutral-400 mt-1">Colleges: JNTU-H &amp; Autonomous Syllabus Nodes.</p>
+                </div>
+                {!uploading && (
+                  <button 
+                    onClick={() => {
+                      setIsAdminModalOpen(false);
+                      setEditingResource(null);
+                    }}
+                    className="p-1.5 rounded-full hover:bg-neutral-100 text-neutral-400 hover:text-neutral-900 transition-colors cursor-pointer"
+                  >
+                    <Minimize2 size={16} />
+                  </button>
+                )}
+              </div>
+
+              <form onSubmit={handleSaveResource} className="space-y-5 overflow-y-auto flex-1 pr-1.5 scrollbar-thin">
+                {formError && (
+                  <div className="p-3 bg-red-50 text-red-600 border border-red-100 rounded-xl text-xs font-bold leading-normal animate-fadeIn">
+                    {formError}
+                  </div>
+                )}
+
+                {/* Form Title Field */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-neutral-400 block font-sans">
+                    Resource Title
+                  </label>
+                  <input 
+                    type="text"
+                    required
+                    value={formTitle}
+                    onChange={(e) => setFormTitle(e.target.value)}
+                    placeholder={modalType === "notes" ? `Unit ${modalUnit} Notes` : "2024 Exam Paper"}
+                    className="w-full px-4 py-3 text-xs md:text-sm border border-neutral-200 hover:border-neutral-300 focus:border-orange-500 focus:ring-1 focus:ring-orange-500/20 rounded-xl outline-none transition-all placeholder:text-neutral-400 text-neutral-900 font-bold"
+                  />
+                </div>
+
+                {/* Conditional Fields: Unit vs Year */}
+                {modalType === "notes" ? (
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-neutral-400 block font-sans">
+                      Target Unit (1-5)
+                    </label>
+                    <select
+                      value={modalUnit || 1}
+                      onChange={(e) => setModalUnit(parseInt(e.target.value))}
+                      className="w-full px-4 py-3 text-xs md:text-sm border border-neutral-200 hover:border-neutral-300 focus:border-orange-500 rounded-xl outline-none transition-all font-bold text-[#2d2d2d]"
+                    >
+                      {[1,2,3,4,5].map(u => (
+                        <option key={u} value={u}>Unit {u} Notes System</option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-neutral-400 block font-sans">
+                      Exam Year
+                    </label>
+                    <input 
+                      type="number"
+                      required
+                      min={2018}
+                      max={new Date().getFullYear() + 1}
+                      value={formYear}
+                      onChange={(e) => setFormYear(parseInt(e.target.value))}
+                      className="w-full px-4 py-3 text-xs md:text-sm border border-neutral-200 hover:border-neutral-300 focus:border-orange-500 rounded-xl outline-none transition-all text-neutral-900 font-bold"
+                    />
+                  </div>
+                )}
+
+                {/* Google Drive Link (Requirement 5) */}
+                <div className="space-y-1.5">
+                  <div className="flex justify-between items-center select-none">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-neutral-400 block font-sans font-extrabold pb-0.5">
+                      Google Drive Link <span className="text-[9px] font-bold text-neutral-400 italic">(Optional Backup)</span>
+                    </label>
+                    {formDriveLink && (
+                      <span className="text-[9px] font-extrabold text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded uppercase tracking-wider animate-pulse">
+                        Configured
+                      </span>
+                    )}
+                  </div>
+                  <input 
+                    type="url"
+                    value={formDriveLink}
+                    onChange={(e) => setFormDriveLink(e.target.value)}
+                    placeholder="https://drive.google.com/file/d/.../view?usp=sharing"
+                    className="w-full px-4 py-3 text-xs border border-neutral-200 hover:border-neutral-300 focus:border-orange-500 focus:ring-1 focus:ring-orange-500/20 rounded-xl outline-none transition-all placeholder:text-neutral-400 font-mono text-neutral-800"
+                  />
+                  <p className="text-[9px] text-neutral-400 leading-normal font-medium">
+                    💡 Ideal for handwritten notebooks or massive files. Saves critical bandwidth under high load. Ensure folder links are set to <strong>"Anyone with Link can view"</strong>.
+                  </p>
+                </div>
+
+                {/* File Upload Selector (Requirement 5 &amp; 6) */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-neutral-400 block font-sans">
+                    Supabase PDF Document {editingResource ? <span className="text-[9px] font-extrabold text-orange-500 italic">(Leave empty to keep existing)</span> : <span className="text-[9px] font-bold text-neutral-400 italic">(Optional if Google Drive alternative link supplied)</span>}
+                  </label>
+                  
+                  {formFile ? (
+                    <div className="p-3 bg-orange-50/40 border border-orange-500/20 rounded-xl flex items-center justify-between gap-3 text-xs font-bold text-neutral-805">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <FileText size={16} className="text-orange-500 shrink-0" />
+                        <span className="truncate">{formFile.name}</span>
+                        <span className="text-[9px] text-neutral-400 font-mono">({(formFile.size / (1024 * 1024)).toFixed(2)} MB)</span>
+                      </div>
+                      <button 
+                        type="button" 
+                        onClick={() => setFormFile(null)}
+                        className="text-red-500 hover:text-red-600 font-black cursor-pointer px-2 py-1 text-[10px] uppercase tracking-wider rounded bg-white hover:bg-red-50 border border-neutral-100"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="border border-dashed border-neutral-200 hover:border-orange-500/35 bg-neutral-50/10 rounded-xl p-4 flex flex-col items-center justify-center text-center transition-all select-none relative group">
+                      <input 
+                        type="file"
+                        id="modal-file-picker"
+                        accept=".pdf,.doc,.docx"
+                        onChange={(e) => setFormFile(e.target.files?.[0] || null)}
+                        className="absolute inset-0 opacity-0 cursor-pointer"
+                      />
+                      <Download size={18} className="text-neutral-400 group-hover:text-orange-500 transition-colors mb-1.5" />
+                      <span className="text-xs font-extrabold text-neutral-700">Choose Academic PDF file</span>
+                      <span className="text-[9px] text-neutral-450 font-medium">Or drag &amp; drop here</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Submitting Buttons / Actions */}
+                <div className="pt-4 border-t border-neutral-100 flex gap-3 justify-end items-center">
+                  {!uploading && (
+                    <button 
+                      type="button"
+                      onClick={() => {
+                        setIsAdminModalOpen(false);
+                        setEditingResource(null);
+                      }}
+                      className="px-5 py-2.5 rounded-xl border border-neutral-200 hover:bg-neutral-50 text-neutral-600 hover:text-neutral-900 text-xs font-bold transition-all cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                  )}
+                  <button 
+                    type="submit"
+                    disabled={uploading}
+                    className="px-6 py-2.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-black text-xs transition-all cursor-pointer shadow-md disabled:opacity-50 disabled:pointer-events-none flex items-center gap-2"
+                  >
+                    {uploading ? (
+                      <>
+                        <Sparkles size={13} className="animate-spin" />
+                        Saving configurations...
+                      </>
+                    ) : (
+                      <>
+                        <Layers size={13} />
+                        {editingResource ? "Save Configurations" : "Publish Resource"}
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
     </div>
