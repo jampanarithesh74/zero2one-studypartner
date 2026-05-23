@@ -724,7 +724,7 @@ export default function App() {
               </div>
 
               {/* Subject cards stacked or grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 md:gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
                 {subjects.map((subject, index) => (
                   <motion.button
                     key={subject.code}
@@ -732,38 +732,38 @@ export default function App() {
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: index * 0.05 }}
                     onClick={() => { setActiveSubject(subject.code); setResourceTab("notes"); }}
-                    whileHover={{ scale: 1.015, y: -2 }}
+                    whileHover={{ scale: 1.012, y: -1.5 }}
                     whileTap={{ scale: 0.985 }}
-                    className="p-6 md:p-8 rounded-[24px] bg-white border border-neutral-105 hover:border-orange-500/40 hover:shadow-[0_0_25px_rgba(249,115,22,0.05)] transition-all duration-300 text-left flex flex-col justify-between h-[230px] md:h-[260px] group relative shadow-sm overflow-hidden animate-fadeIn"
+                    className="p-4 md:p-5 rounded-[18px] bg-white border border-neutral-105 hover:border-orange-500/40 hover:shadow-[0_0_20px_rgba(249,115,22,0.04)] transition-all duration-300 text-left flex flex-col justify-between h-[155px] md:h-[185px] group relative shadow-sm overflow-hidden animate-fadeIn"
                   >
                     {/* Subtle hover gradient strip */}
                     <div className="absolute inset-0 bg-gradient-to-r from-orange-500/0 via-orange-500/[0.01] to-orange-500/0 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
                     
-                    <div className="space-y-4 relative z-10 w-full animate-fadeIn">
+                    <div className="space-y-2 md:space-y-2.5 relative z-10 w-full animate-fadeIn">
                       {/* Icon Container */}
-                      <div className="w-10 h-10 md:w-12 md:h-12 rounded-2xl bg-orange-500/10 border border-orange-500/20 flex items-center justify-center text-orange-500 group-hover:bg-orange-500 group-hover:text-white group-hover:scale-105 transition-all duration-300 shadow-sm shrink-0">
-                        <BookOpen size={18} className="md:w-5 md:h-5" />
+                      <div className="w-8 h-8 md:w-9 md:h-9 rounded-xl bg-orange-500/10 border border-orange-500/20 flex items-center justify-center text-orange-500 group-hover:bg-orange-500 group-hover:text-white group-hover:scale-105 transition-all duration-300 shadow-sm shrink-0">
+                        <BookOpen size={14} className="md:w-4.5 md:h-4.5" />
                       </div>
                       
-                      <div className="space-y-1">
-                        <h3 className="text-lg md:text-xl font-extrabold text-neutral-900 tracking-tight leading-snug line-clamp-2">
+                      <div className="space-y-0.5">
+                        <h3 className="text-sm md:text-base font-extrabold text-neutral-900 tracking-tight leading-snug line-clamp-2">
                           {subject.title}
                         </h3>
-                        <p className="text-xs text-neutral-400 font-light font-sans leading-relaxed">
+                        <p className="text-[10px] md:text-xs text-neutral-400 font-light font-sans truncate block">
                           Unit-wise handwritten lectures and PYQ papers.
                         </p>
                       </div>
                     </div>
 
                     {/* Card Footer: Metadata and Pill CTA */}
-                    <div className="flex justify-between items-center pt-4 border-t border-neutral-100/50 relative z-10 w-full mt-auto">
-                      <span className="font-mono text-[9px] md:text-[10px] uppercase font-bold tracking-wider text-neutral-400 bg-neutral-50 px-2 py-0.5 rounded border border-neutral-100/60 leading-none">
+                    <div className="flex justify-between items-center pt-2 md:pt-2.5 border-t border-neutral-100/50 relative z-10 w-full mt-auto">
+                      <span className="font-mono text-[8px] md:text-[9px] uppercase font-bold tracking-wider text-neutral-400 bg-neutral-50 px-1.5 py-0.5 rounded border border-neutral-100/60 leading-none">
                         {subject.code}
                       </span>
                       
-                      <span className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-neutral-105 text-neutral-600 font-sans border border-neutral-100 group-hover:bg-orange-500 group-hover:text-white group-hover:border-orange-400 group-hover:scale-102 transition-all duration-300 text-[10px] md:text-xs font-bold shadow-sm">
+                      <span className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-neutral-105 text-neutral-600 font-sans border border-neutral-100 group-hover:bg-orange-500 group-hover:text-white group-hover:border-orange-400 transition-all duration-300 text-[9px] md:text-[11px] font-bold shadow-sm">
                         Open Notes
-                        <ChevronRight size={12} className="transition-transform group-hover:translate-x-0.5" />
+                        <ChevronRight size={11} className="transition-transform group-hover:translate-x-0.5" />
                       </span>
                     </div>
                   </motion.button>
