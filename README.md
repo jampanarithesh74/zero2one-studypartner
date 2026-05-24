@@ -147,14 +147,3 @@ The platform gained traction primarily through:
 - Student word-of-mouth
 
 ---
-
-# Screenshots
-
-Add your screenshots here.
-
-Example:
-
-```md
-![Homepage](./screenshots/home.png)
-![Resources](./screenshots/resources.png)
-![PDF Viewer](./screenshots/viewer.png)
