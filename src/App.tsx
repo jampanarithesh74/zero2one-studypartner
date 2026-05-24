@@ -4,12 +4,13 @@
  */
 
 import { motion, AnimatePresence } from "motion/react";
-import { ChevronRight, Sparkles, ArrowLeft, BookOpen, Clock, Award, FileText, Download, Layers, Shield, LogIn, LogOut, Plus, Trash2, Maximize2, Minimize2, Instagram, ArrowUpRight, Edit2, ExternalLink } from "lucide-react";
-import { useState, useEffect, FormEvent } from "react";
+import { ChevronRight, Sparkles, ArrowLeft, BookOpen, Clock, Award, FileText, Download, Layers, Shield, LogIn, LogOut, Plus, Trash2, Maximize2, Minimize2, Instagram, ArrowUpRight, Edit2, ExternalLink, RotateCcw, RotateCw } from "lucide-react";
+import { useState, useEffect, FormEvent, useRef } from "react";
 import { DEPARTMENTS, SYLLABUS_MAP, SUBJECT_DETAILS } from "./data/syllabus";
 import { auth, db, googleProvider, ALLOWED_ADMIN_EMAILS, handleFirestoreError, OperationType } from "./lib/firebase";
 import { onAuthStateChanged, signInWithPopup, signOut, User } from "firebase/auth";
 import { doc, getDoc, setDoc, collection, addDoc, query, where, onSnapshot, serverTimestamp, deleteDoc, updateDoc } from "firebase/firestore";
+import { PDFViewer } from "./components/PDFViewer";
 
 type ViewState = "year-selection" | "dept-selection" | "sem-selection" | "choice-selection" | "syllabus-view" | "resources-view";
 
@@ -52,6 +53,44 @@ export default function App() {
   const [formYear, setFormYear] = useState<number>(new Date().getFullYear());
   const [formError, setFormError] = useState("");
 
+  // PDF Rotation States & Dimension Tracking
+  const [previewRotation, setPreviewRotation] = useState<number>(0);
+  const [fullscreenRotation, setFullscreenRotation] = useState<number>(0);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const fullscreenContainerRef = useRef<HTMLDivElement>(null);
+  const [previewDims, setPreviewDims] = useState({ w: 0, h: 0 });
+  const [fullscreenDims, setFullscreenDims] = useState({ w: 0, h: 0 });
+
+  // ResizeObserver for normal preview iframe container
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setPreviewDims({
+          w: entry.contentRect.width,
+          h: entry.contentRect.height,
+        });
+      }
+    });
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, [expandedUnit, activeSubject, viewState]);
+
+  // ResizeObserver for fullscreen iframe container
+  useEffect(() => {
+    if (!fullscreenContainerRef.current) return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setFullscreenDims({
+          w: entry.contentRect.width,
+          h: entry.contentRect.height,
+        });
+      }
+    });
+    observer.observe(fullscreenContainerRef.current);
+    return () => observer.disconnect();
+  }, [isFullscreen]);
+
   useEffect(() => {
     if (isFullscreen) {
       document.body.style.overflow = 'hidden';
@@ -69,6 +108,7 @@ export default function App() {
   const activeUnitNoteUrl = activeUnitNote?.fileUrl || "";
 
   useEffect(() => {
+    setPreviewRotation(0);
     if (activeUnitNoteUrl) {
       setIframeLoading(true);
     } else {
@@ -77,6 +117,7 @@ export default function App() {
   }, [activeUnitNoteUrl, activeSubject, expandedUnit]);
 
   useEffect(() => {
+    setFullscreenRotation(0);
     if (isFullscreen && activeUnitNoteUrl) {
       setFullscreenIframeLoading(true);
     } else {
@@ -895,6 +936,29 @@ export default function App() {
                                   <>
                                     {activeNote.fileUrl && (
                                       <>
+                                        {/* Rotate Controls */}
+                                        <div className="flex items-center gap-1 border border-neutral-200 bg-neutral-100 p-1 rounded-xl shadow-sm shrink-0">
+                                          <button 
+                                            type="button"
+                                            onClick={() => setPreviewRotation(prev => (prev - 90 + 360) % 360)}
+                                            className="p-1 px-1.5 md:px-2 rounded-lg text-neutral-600 hover:text-orange-500 hover:bg-white transition-all duration-205 active:scale-95 cursor-pointer flex items-center justify-center gap-1"
+                                            title="Rotate Left 90°"
+                                          >
+                                            <RotateCcw size={11} />
+                                            <span className="text-[10px] font-bold hidden md:inline">Rotate Left</span>
+                                          </button>
+                                          <div className="w-[1px] h-3 bg-neutral-250" />
+                                          <button 
+                                            type="button"
+                                            onClick={() => setPreviewRotation(prev => (prev + 90) % 360)}
+                                            className="p-1 px-1.5 md:px-2 rounded-lg text-neutral-600 hover:text-orange-500 hover:bg-white transition-all duration-205 active:scale-95 cursor-pointer flex items-center justify-center gap-1"
+                                            title="Rotate Right 90°"
+                                          >
+                                            <RotateCw size={11} />
+                                            <span className="text-[10px] font-bold hidden md:inline">Rotate Right</span>
+                                          </button>
+                                        </div>
+
                                         <button 
                                           onClick={() => setIsFullscreen(true)}
                                           className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-neutral-100 hover:bg-neutral-200 text-neutral-750 text-xs font-bold transition-all border border-neutral-250 cursor-pointer shadow-sm active:scale-[0.98]"
@@ -986,62 +1050,10 @@ export default function App() {
                                     )}
                                   </div>
                                   
-                                  {/* Embedded Iframe Previewer with Buffer Loader */}
+                                  {/* High-Performance Same-Origin canvas PDF viewer */}
                                   {activeNote.fileUrl ? (
-                                    <div className="relative flex-1 w-full min-h-[225px] rounded-xl overflow-hidden border border-neutral-100 bg-white">
-                                      {(iframeLoading || showSlowPreviewNotice) && (
-                                        <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/95 backdrop-blur-sm z-30 p-6 transition-all duration-300">
-                                          <div className="flex flex-col items-center space-y-4 max-w-xs text-center select-none">
-                                            {showSlowPreviewNotice ? (
-                                              <>
-                                                <div className="w-10 h-10 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center animate-bounce">
-                                                  <Sparkles size={18} />
-                                                </div>
-                                                <div className="space-y-1">
-                                                  <p className="text-xs font-black tracking-wider text-neutral-900 uppercase">
-                                                    PDF loading issues detected
-                                                  </p>
-                                                  <p className="text-[10px] text-neutral-500 leading-normal font-medium">
-                                                    The browser preview seems slow. You can jump directly to the backup Google Drive viewer.
-                                                  </p>
-                                                </div>
-                                                {activeNote.driveLink && (
-                                                  <a 
-                                                    href={activeNote.driveLink}
-                                                    target="_blank"
-                                                    rel="noreferrer"
-                                                    className="px-4 py-2.5 bg-neutral-900 hover:bg-black text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-1.5 cursor-pointer scale-95"
-                                                  >
-                                                    Open Backup on G-Drive <ArrowUpRight size={13} />
-                                                  </a>
-                                                )}
-                                              </>
-                                            ) : (
-                                              <>
-                                                <div className="relative w-12 h-12">
-                                                  <div className="absolute inset-0 rounded-full border-2 border-orange-500/10" />
-                                                  <div className="absolute inset-0 rounded-full border-t-2 border-orange-500 animate-spin" />
-                                                  <div className="absolute inset-2 rounded-full border-r-2 border-orange-400/40 animate-spin [animation-duration:1.5s]" />
-                                                </div>
-                                                <div className="space-y-1 select-none">
-                                                  <p className="text-xs font-extrabold tracking-widest text-neutral-900 uppercase">
-                                                    Zero2One Previewer
-                                                  </p>
-                                                  <p className="text-[10px] text-neutral-401 font-medium font-sans animate-pulse">
-                                                    Rendering secure PDF document...
-                                                  </p>
-                                                </div>
-                                              </>
-                                            )}
-                                          </div>
-                                        </div>
-                                      )}
-                                      <iframe 
-                                        src={`https://docs.google.com/viewer?url=${encodeURIComponent(activeNote.fileUrl)}&embedded=true`} 
-                                        className="w-full h-full min-h-[225px] border-none"
-                                        title="Notes Preview"
-                                        onLoad={() => setIframeLoading(false)}
-                                      />
+                                    <div ref={containerRef} className="relative flex-1 w-full min-h-[300px] h-full rounded-2xl overflow-hidden border border-neutral-200 bg-neutral-900 shadow-xl">
+                                      <PDFViewer fileUrl={activeNote.fileUrl} rotation={previewRotation} />
                                     </div>
                                   ) : (
                                     /* Direct Google Drive Display Card (If fileUrl is omitted & only Drive link is present for handwritten PDFs) */
@@ -1702,12 +1714,35 @@ export default function App() {
                 exit={{ opacity: 0 }}
                 className="fixed inset-0 z-[9999] bg-neutral-900 flex flex-col"
               >
-                <div className="p-4 bg-neutral-800 flex justify-between items-center text-white px-8 select-none">
+                <div className="p-4 bg-neutral-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 text-white px-8 select-none">
                   <div className="flex flex-col min-w-0">
                     <span className="text-[10px] text-orange-400 font-bold uppercase tracking-widest">{activeSubject}</span>
                     <h2 className="font-bold truncate text-sm md:text-base">{activeNote.title}</h2>
                   </div>
-                  <div className="flex items-center gap-2 md:gap-4 shrink-0">
+                  <div className="flex items-center flex-wrap gap-2 md:gap-4 shrink-0">
+                    {/* Rotate Controls */}
+                    <div className="flex items-center gap-1 border border-neutral-700 bg-neutral-900/60 p-1 rounded-xl shadow-inner shrink-0 leading-none">
+                      <button 
+                        type="button"
+                        onClick={() => setFullscreenRotation(prev => (prev - 90 + 360) % 360)}
+                        className="p-1 px-1.5 md:px-2 rounded-lg text-neutral-300 hover:text-orange-400 hover:bg-neutral-800 transition-all duration-205 active:scale-95 cursor-pointer flex items-center justify-center gap-1.5"
+                        title="Rotate Left 90°"
+                      >
+                        <RotateCcw size={13} />
+                        <span className="text-[11px] font-bold hidden md:inline">Rotate Left</span>
+                      </button>
+                      <div className="w-[1px] h-3.5 bg-neutral-750" />
+                      <button 
+                        type="button"
+                        onClick={() => setFullscreenRotation(prev => (prev + 90) % 360)}
+                        className="p-1 px-1.5 md:px-2 rounded-lg text-neutral-300 hover:text-orange-400 hover:bg-neutral-800 transition-all duration-205 active:scale-95 cursor-pointer flex items-center justify-center gap-1.5"
+                        title="Rotate Right 90°"
+                      >
+                        <RotateCw size={13} />
+                        <span className="text-[11px] font-bold hidden md:inline">Rotate Right</span>
+                      </button>
+                    </div>
+
                     {activeNote.driveLink && (
                       <a 
                         href={activeNote.driveLink}
@@ -1734,31 +1769,11 @@ export default function App() {
                     </button>
                   </div>
                 </div>
-                <div className="flex-1 bg-white relative">
-                  {fullscreenIframeLoading && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-neutral-900/95 backdrop-blur-sm z-30 transition-all duration-300">
-                      <div className="flex flex-col items-center space-y-4">
-                        <div className="relative w-12 h-12">
-                          <div className="absolute inset-0 rounded-full border-2 border-orange-500/10" />
-                          <div className="absolute inset-0 rounded-full border-t-2 border-orange-500 animate-spin" />
-                          <div className="absolute inset-2 rounded-full border-r-2 border-orange-400/40 animate-spin [animation-duration:1.5s]" />
-                        </div>
-                        <div className="text-center space-y-1 select-none">
-                          <p className="text-xs font-extrabold tracking-widest text-white uppercase">
-                            Zero2One Previewer
-                          </p>
-                          <p className="text-[10px] text-neutral-400 font-medium font-sans animate-pulse">
-                            Rendering premium full screen view...
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  <iframe 
-                    src={`https://docs.google.com/viewer?url=${encodeURIComponent(activeNote.fileUrl)}&embedded=true`} 
-                    className="w-full h-full border-none"
-                    title="Fullscreen Viewer"
-                    onLoad={() => setFullscreenIframeLoading(false)}
+                <div ref={fullscreenContainerRef} className="flex-1 bg-neutral-900 relative overflow-hidden">
+                  <PDFViewer 
+                    fileUrl={activeNote.fileUrl} 
+                    rotation={fullscreenRotation} 
+                    isFullscreen={true} 
                   />
                 </div>
               </motion.div>
