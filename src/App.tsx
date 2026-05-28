@@ -9,7 +9,7 @@ import { useState, useEffect, FormEvent, useRef } from "react";
 import { DEPARTMENTS, SYLLABUS_MAP, SUBJECT_DETAILS } from "./data/syllabus";
 import { auth, db, googleProvider, ALLOWED_ADMIN_EMAILS, handleFirestoreError, OperationType } from "./lib/firebase";
 import { onAuthStateChanged, signInWithPopup, signOut, User } from "firebase/auth";
-import { doc, getDoc, setDoc, collection, addDoc, query, where, onSnapshot, serverTimestamp, deleteDoc, updateDoc } from "firebase/firestore";
+import { doc, getDoc, setDoc, collection, addDoc, query, where, onSnapshot, serverTimestamp, deleteDoc, updateDoc, getDocs, writeBatch } from "firebase/firestore";
 import { PDFViewer } from "./components/PDFViewer";
 
 type ViewState = "year-selection" | "dept-selection" | "sem-selection" | "choice-selection" | "syllabus-view" | "resources-view";
@@ -33,6 +33,24 @@ export default function App() {
 
   // Firestore Data State
   const [uploadedResources, setUploadedResources] = useState<any[]>([]);
+  const [dynamicSubjects, setDynamicSubjects] = useState<any[]>([]);
+  
+  // Normalization Panel Hub States
+  const [isNormPanelOpen, setIsNormPanelOpen] = useState(false);
+  const [normStatus, setNormStatus] = useState<"idle" | "running" | "success" | "error">("idle");
+  const [normLogs, setNormLogs] = useState<string[]>([]);
+  
+  // Subject Manager Edit state
+  const [isSubjectModalOpen, setIsSubjectModalOpen] = useState(false);
+  const [editingSubject, setEditingSubject] = useState<any | null>(null);
+  const [subjectFormCode, setSubjectFormCode] = useState("");
+  const [subjectFormName, setSubjectFormName] = useState("");
+  const [subjectFormSem, setSubjectFormSem] = useState<number>(1);
+  const [subjectFormDepts, setSubjectFormDepts] = useState<string[]>([]);
+  const [subjectFormCredits, setSubjectFormCredits] = useState<number>(4);
+  const [subjectFormType, setSubjectFormType] = useState<string>("PC");
+  const [subjectFormError, setSubjectFormError] = useState("");
+  const [subjectFormSaving, setSubjectFormSaving] = useState(false);
 
   // Admin Upload State
   const [uploading, setUploading] = useState(false);
@@ -172,13 +190,40 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Fetch resources based on selection
+  // Fetch dynamic subjects from Firestore
   useEffect(() => {
-    if (viewState === "resources-view" && selectedDept && selectedSem) {
+    if (selectedDept && selectedSem) {
+      const q = query(
+        collection(db, "subjects"),
+        where("linked_departments", "array-contains", selectedDept)
+      );
+
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() as any }));
+        // Elegant client-side semester filtering to handle semester shifting without Firestore composite indexes
+        const filteredList = list.filter(sub => {
+          if (sub.semester_mapping && typeof sub.semester_mapping === "object" && sub.semester_mapping[selectedDept] !== undefined) {
+            return sub.semester_mapping[selectedDept] === selectedSem;
+          }
+          return sub.semester === selectedSem;
+        });
+        setDynamicSubjects(filteredList);
+      }, (error) => {
+        handleFirestoreError(error, OperationType.LIST, "subjects");
+      });
+
+      return () => unsubscribe();
+    } else {
+      setDynamicSubjects([]);
+    }
+  }, [selectedDept, selectedSem]);
+
+  // Fetch resources based on active subject selection in real time
+  useEffect(() => {
+    if (viewState === "resources-view" && activeSubject) {
       const q = query(
         collection(db, "resources"),
-        where("branch", "==", selectedDept),
-        where("sem", "==", selectedSem)
+        where("subjectCode", "==", activeSubject)
       );
 
       const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -189,8 +234,82 @@ export default function App() {
       });
 
       return () => unsubscribe();
+    } else if (!activeSubject) {
+      setUploadedResources([]);
     }
-  }, [viewState, selectedDept, selectedSem]);
+  }, [viewState, activeSubject]);
+
+  const getMergedSubjects = () => {
+    const staticList = SYLLABUS_MAP[selectedDept || ""]?.[selectedSem || 1] || [];
+    const mergedMap = new Map<string, any>();
+    
+    // 1. Load static subjects (as dynamic fallback & template)
+    staticList.forEach(s => {
+      mergedMap.set(s.code, {
+        code: s.code,
+        title: s.title,
+        credits: s.credits,
+        type: s.type,
+        isStatic: true
+      });
+    });
+
+    // 2. Override or append dynamic subjects from Firestore
+    dynamicSubjects.forEach(ds => {
+      mergedMap.set(ds.subjectCode || ds.id, {
+        code: ds.subjectCode || ds.id,
+        title: ds.subjectName || ds.title,
+        credits: ds.credits || 4,
+        type: ds.type || "PC",
+        isStatic: false,
+        linked_departments: ds.linked_departments || []
+      });
+    });
+
+    return Array.from(mergedMap.values());
+  };
+
+  const getActiveSubjectData = () => {
+    if (!activeSubject) return null;
+    
+    // Match static record first
+    if (SUBJECT_DETAILS[activeSubject]) {
+      return SUBJECT_DETAILS[activeSubject];
+    }
+    
+    // Match dynamic Subject model
+    const dynSub = dynamicSubjects.find(s => s.subjectCode === activeSubject || s.id === activeSubject);
+    if (dynSub) {
+      return {
+        title: dynSub.subjectName || dynSub.title || "Custom Subject",
+        outcomes: dynSub.outcomes || [
+          "Gain comprehensive theoretical and practical insights of the course curriculum.",
+          "Apply subject guidelines to solve technical problems.",
+          "Excel in autonomous examinations and secure higher grades."
+        ],
+        units: dynSub.units && dynSub.units.length > 0 ? dynSub.units : [
+          { title: "UNIT I: Course Fundamentals", content: "Comprehensive overview of foundational modules, key definitions, and introduction to core subject systems." },
+          { title: "UNIT II: Core Structural Methods", content: "Investigation of design models, operational paradigms, and mathematical or procedural algorithms." },
+          { title: "UNIT III: Intermediate Applications", content: "Technical details of workflow execution, system parameters, and hands-on laboratory exercises." },
+          { title: "UNIT IV: Advanced Integrations", content: "Complex architectures, performance analytics, mitigation techniques, and contemporary paradigms." },
+          { title: "UNIT V: Practical Projects & Case Studies", content: "Review of typical autonomous exams, industrial application studies, and final project deliverables." }
+        ]
+      };
+    }
+    
+    // Abstract Fallback Template
+    return {
+      title: activeSubject,
+      outcomes: ["Understand core concepts of " + activeSubject],
+      units: [
+        { title: "UNIT I: Introduction & Core Concepts", content: "Fundamental principles and overview of the course syllabus." },
+        { title: "UNIT II: Intermediate Methods", content: "Core structural methodologies, calculations, and analytical components." },
+        { title: "UNIT III: Advanced Frameworks", content: "In-depth case studies, problem solving matrices, and modeling." },
+        { title: "UNIT IV: Contemporary Applications", content: "Real-world implementations, current trends, and system integration." },
+        { title: "UNIT V: Practical Research", content: "Review guidelines, practical procedures, and advanced exercises." }
+      ]
+    };
+  };
 
   const handleLogin = async () => {
     try {
@@ -271,6 +390,16 @@ export default function App() {
         console.log("Upload completed, URL registered:", downloadURL);
       }
 
+      // Identify all departments offering this course dynamically/statically to populate department_visibility
+      const offeringDepts = new Set<string>([selectedDept]);
+      Object.entries(SYLLABUS_MAP).forEach(([deptName, semMap]) => {
+        Object.entries(semMap).forEach(([semStr, subList]) => {
+          if (subList.some(s => s.code === activeSubject)) {
+            offeringDepts.add(deptName);
+          }
+        });
+      });
+
       // Build target document payload
       const resourceData: any = {
         branch: selectedDept,
@@ -281,7 +410,9 @@ export default function App() {
         fileUrl: downloadURL,
         driveLink: formDriveLink.trim(),
         uploadedAt: serverTimestamp(),
-        uploadedBy: user.uid
+        uploadedBy: user.uid,
+        semester: selectedSem,
+        department_visibility: Array.from(offeringDepts)
       };
 
       if (modalType === "notes") {
@@ -321,6 +452,220 @@ export default function App() {
       setFormError(error.message || "An unexpected error occurred while writing notes to database.");
     } finally {
       setUploading(false);
+    }
+  };
+
+  const runDatabaseNormalization = async () => {
+    if (!isAdmin) {
+      alert("Unauthorized operation.");
+      return;
+    }
+    
+    setNormStatus("running");
+    setNormLogs(["Initiating database normalization process...", "Acquiring collection lock..."]);
+    
+    try {
+      // Step 1: Backup & scan current collections
+      setNormLogs(prev => [...prev, "Step 1: Scanning existing resources collection in Firestore..."]);
+      
+      const resourcesRef = collection(db, "resources");
+      const { getDocs, doc, setDoc } = await import("firebase/firestore");
+      const resourcesSnap = await getDocs(resourcesRef);
+      const resourcesList = resourcesSnap.docs.map(d => ({ id: d.id, ...d.data() as any }));
+      
+      setNormLogs(prev => [...prev, `Found ${resourcesList.length} total resources in legacy collection.`]);
+      
+      // Step 2: Establish base subjects map from historical/static SYLLABUS_MAP
+      setNormLogs(prev => [...prev, "Step 2: Harvesting subject code signatures from static syllabus mappings..."]);
+      
+      const uniqueSubjectCodes = new Set<string>();
+      const subjectToDepts = new Map<string, Set<string>>();
+      const subjectToSemMap = new Map<string, Record<string, number>>();
+      const subjectToSem = new Map<string, number>();
+      const subjectToName = new Map<string, string>();
+      const subjectToCredits = new Map<string, number>();
+      const subjectToType = new Map<string, string>();
+      
+      // Fill from static maps
+      Object.entries(SYLLABUS_MAP).forEach(([deptName, semMap]) => {
+        Object.entries(semMap).forEach(([semStr, subList]) => {
+          const semNum = parseInt(semStr);
+          subList.forEach(s => {
+            uniqueSubjectCodes.add(s.code);
+            if (!subjectToDepts.has(s.code)) {
+              subjectToDepts.set(s.code, new Set<string>());
+            }
+            subjectToDepts.get(s.code)!.add(deptName);
+            
+            // Build dynamic semester mapping
+            if (!subjectToSemMap.has(s.code)) {
+              subjectToSemMap.set(s.code, {});
+            }
+            subjectToSemMap.get(s.code)![deptName] = semNum;
+
+            subjectToSem.set(s.code, semNum);
+            subjectToName.set(s.code, s.title);
+            subjectToCredits.set(s.code, s.credits);
+            subjectToType.set(s.code, s.type);
+          });
+        });
+      });
+      
+      setNormLogs(prev => [...prev, `Harvested ${uniqueSubjectCodes.size} master courses from local registry.`]);
+      
+      // Step 3: Scan existing resources to find any other unique/custom subject codes
+      setNormLogs(prev => [...prev, "Step 3: Harvesting dynamic subject codes from active user uploads..."]);
+      let dynamicCount = 0;
+      resourcesList.forEach(res => {
+        if (res.subjectCode) {
+          const upperCode = res.subjectCode.trim().toUpperCase();
+          if (!uniqueSubjectCodes.has(upperCode)) {
+            uniqueSubjectCodes.add(upperCode);
+            dynamicCount++;
+          }
+          if (res.branch) {
+            if (!subjectToDepts.has(upperCode)) {
+              subjectToDepts.set(upperCode, new Set<string>());
+            }
+            subjectToDepts.get(upperCode)!.add(res.branch);
+
+            if (res.sem) {
+              if (!subjectToSemMap.has(upperCode)) {
+                subjectToSemMap.set(upperCode, {});
+              }
+              subjectToSemMap.get(upperCode)![res.branch] = res.sem;
+            }
+          }
+          if (res.sem && !subjectToSem.has(upperCode)) {
+            subjectToSem.set(upperCode, res.sem);
+          }
+          if (res.title && !subjectToName.has(upperCode)) {
+            const cleanedTitle = res.title.split(" - ")[0] || res.title;
+            subjectToName.set(upperCode, cleanedTitle);
+          }
+        }
+      });
+      
+      setNormLogs(prev => [...prev, `Found ${dynamicCount} custom or non-static dynamic codes registered in resources.`]);
+      
+      // Step 4: Write/Sync normalized master SUBJECTS to Firestore Subjects collection
+      setNormLogs(prev => [...prev, "Step 4: Writing normalized centralized Subjects list to subjects/ collection..."]);
+      
+      let subjectsSynced = 0;
+      
+      for (const code of uniqueSubjectCodes) {
+        const linkedDepts = Array.from(subjectToDepts.get(code) || []);
+        const sem = subjectToSem.get(code) || 1;
+        const name = subjectToName.get(code) || code;
+        const credits = subjectToCredits.get(code) || 4;
+        const type = subjectToType.get(code) || "PC";
+        const semesterMapping = subjectToSemMap.get(code) || {};
+        
+        try {
+          const subRef = doc(db, "subjects", code);
+          await setDoc(subRef, {
+            subjectCode: code,
+            subjectName: name,
+            semester: sem,
+            semester_mapping: semesterMapping,
+            linked_departments: linkedDepts,
+            credits,
+            type,
+            updatedAt: serverTimestamp()
+          }, { merge: true });
+          
+          subjectsSynced++;
+        } catch (err: any) {
+          setNormLogs(prev => [...prev, `⚠️ Failed syncing subject code ${code}: ${err.message}`]);
+        }
+      }
+      
+      setNormLogs(prev => [...prev, `Successfully synchronized ${subjectsSynced} subjects into centralized table.`]);
+      
+      // Step 5: Update old resource entities to follow standard key references
+      setNormLogs(prev => [...prev, "Step 5: Transitioning resource references to relational architecture..."]);
+      
+      let resourcesMigrated = 0;
+      for (const res of resourcesList) {
+        if (res.id) {
+          const upperCode = (res.subjectCode || "").trim().toUpperCase();
+          if (upperCode) {
+            try {
+              const resRef = doc(db, "resources", res.id);
+              const linkedDepts = Array.from(subjectToDepts.get(upperCode) || [res.branch || ""]);
+              await updateDoc(resRef, {
+                subjectCode: upperCode,
+                semester: res.sem || res.semester || 1,
+                department_visibility: linkedDepts,
+                updatedAt: serverTimestamp()
+              });
+              resourcesMigrated++;
+            } catch (err: any) {
+              // Ignore or log error
+            }
+          }
+        }
+      }
+      
+      setNormLogs(prev => [...prev, `Successfully updated relational links for ${resourcesMigrated} resources.`]);
+      setNormLogs(prev => [...prev, "🎉 Database Normalization complete! Subject-centric framework successfully activated."]);
+      setNormStatus("success");
+    } catch (error: any) {
+      console.error(error);
+      setNormLogs(prev => [...prev, `❌ Error during normalization: ${error.message || error}`]);
+      setNormStatus("error");
+    }
+  };
+
+  const handleSaveSubject = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!isAdmin || !subjectFormCode.trim() || !subjectFormName.trim()) {
+      setSubjectFormError("Required fields are missing.");
+      return;
+    }
+    
+    if (subjectFormDepts.length === 0) {
+      setSubjectFormError("Please select at least one linked department.");
+      return;
+    }
+    
+    setSubjectFormSaving(true);
+    setSubjectFormError("");
+    
+    const upperCode = subjectFormCode.trim().toUpperCase();
+    
+    try {
+      const { doc, setDoc } = await import("firebase/firestore");
+      const subRef = doc(db, "subjects", upperCode);
+      
+      const semMapping: Record<string, number> = {};
+      subjectFormDepts.forEach(dept => {
+        semMapping[dept] = subjectFormSem;
+      });
+
+      await setDoc(subRef, {
+        subjectCode: upperCode,
+        subjectName: subjectFormName.trim(),
+        semester: subjectFormSem,
+        semester_mapping: semMapping,
+        linked_departments: subjectFormDepts,
+        credits: subjectFormCredits,
+        type: subjectFormType,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+      
+      alert(`Subject ${upperCode} saved successfully!`);
+      setIsSubjectModalOpen(false);
+      setSubjectFormCode("");
+      setSubjectFormName("");
+      setSubjectFormSem(1);
+      setSubjectFormDepts([]);
+      setEditingSubject(null);
+    } catch (err: any) {
+      console.error(err);
+      setSubjectFormError(err.message || "Failed to save subject.");
+    } finally {
+      setSubjectFormSaving(false);
     }
   };
 
@@ -724,8 +1069,8 @@ export default function App() {
   );
 
   const renderResourcesView = () => {
-    const subjects = SYLLABUS_MAP[selectedDept || ""]?.[selectedSem || 1] || [];
-    const activeSubjectData = activeSubject ? SUBJECT_DETAILS[activeSubject] : null;
+    const subjects = getMergedSubjects();
+    const activeSubjectData = getActiveSubjectData();
 
     return (
       <div className="min-h-screen bg-white flex flex-col justify-between overflow-y-auto font-sans selection:bg-orange-100/60 pb-16">
@@ -1365,6 +1710,16 @@ export default function App() {
                 <span className="text-[11px] md:text-xs font-bold text-neutral-900">{user.displayName}</span>
                 {isAdmin && <span className="text-[8px] md:text-[9px] font-black uppercase text-orange-500 tracking-widest mt-0.5 leading-none">Admin</span>}
               </div>
+              {isAdmin && (
+                <button 
+                  onClick={() => setIsNormPanelOpen(true)}
+                  className="px-3 py-1.5 md:px-4 md:py-2 rounded-xl bg-orange-600 hover:bg-orange-700 text-white text-[9px] md:text-[10px] font-black uppercase tracking-wider transition-all hover:scale-105 active:scale-95 flex items-center gap-1.5 shadow-sm font-sans"
+                  title="Database Normalization Suite"
+                  id="admin-db-control-btn"
+                >
+                  <Shield size={12} /> Database Hub
+                </button>
+              )}
               <button 
                 onClick={handleLogout}
                 className="p-1.5 md:p-2 rounded-full bg-white text-neutral-400 hover:text-red-500 transition-all border border-neutral-200 shadow-sm hover:shadow-md hover:bg-neutral-100"
@@ -1387,9 +1742,9 @@ export default function App() {
   );
 
   const renderSyllabusView = () => {
-    const subjects = SYLLABUS_MAP[selectedDept || ""]?.[selectedSem || 1] || [];
+    const subjects = getMergedSubjects();
     const currentActiveSubject = activeSubject || (subjects.length > 0 ? subjects[0].code : null);
-    const activeSubjectData = currentActiveSubject ? SUBJECT_DETAILS[currentActiveSubject] : null;
+    const activeSubjectData = getActiveSubjectData();
     const selectedSubjectObj = subjects.find(s => s.code === currentActiveSubject);
 
     return (
@@ -1980,6 +2335,286 @@ export default function App() {
                         {editingResource ? "Save Configurations" : "Publish Resource"}
                       </>
                     )}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Database Normalization Panel Suite Modal */}
+      <AnimatePresence>
+        {isNormPanelOpen && (
+          <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                if (normStatus !== "running") {
+                  setIsNormPanelOpen(false);
+                }
+              }}
+              className="absolute inset-0 bg-neutral-950/60 backdrop-blur-md"
+            />
+
+            <motion.div 
+              initial={{ scale: 0.95, y: 15, opacity: 0 }}
+              animate={{ scale: 1, y: 0, opacity: 1 }}
+              exit={{ scale: 0.95, y: 15, opacity: 0 }}
+              transition={{ type: "spring", duration: 0.35 }}
+              className="relative w-full max-w-xl bg-white rounded-[28px] border border-neutral-100 shadow-2xl p-6 md:p-8 overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              <div className="absolute top-0 right-0 w-32 h-32 bg-orange-500/5 rounded-full filter blur-xl translate-x-12 -translate-y-12" />
+              
+              <div className="relative flex justify-between items-start pb-4 border-b border-neutral-100 select-none mb-5">
+                <div>
+                  <span className="text-[9px] font-black uppercase text-orange-600 tracking-widest block mb-0.5">Database Normalization Suite</span>
+                  <h3 className="text-base md:text-lg font-black text-neutral-900 font-sans tracking-tight leading-none">ZERO2ONE Academic Master Control</h3>
+                </div>
+                {normStatus !== "running" && (
+                  <button 
+                    onClick={() => setIsNormPanelOpen(false)}
+                    className="p-1.5 rounded-full hover:bg-neutral-100 text-neutral-400 hover:text-neutral-900 transition-colors cursor-pointer"
+                  >
+                    <Minimize2 size={16} />
+                  </button>
+                )}
+              </div>
+
+              <div className="space-y-4 overflow-y-auto flex-1 pr-1.5 scrollbar-thin">
+                <p className="text-xs text-neutral-500 leading-relaxed">
+                  Analyze, deduplicate and transition your course syllabus subjects and uploaded resource files into a centralized data model. Duplicate subject code nodes will be cataloged and mapped under a singular core document.
+                </p>
+
+                {/* Log Output Console board */}
+                <div className="space-y-1.5">
+                  <span className="text-[9px] font-black uppercase tracking-widest text-neutral-400 block font-sans">Execution Output Log</span>
+                  <div className="bg-neutral-950 font-mono text-emerald-400 text-[10px] md:text-xs p-4 rounded-2xl max-h-48 overflow-y-auto mb-1 border border-neutral-800 space-y-1 shadow-inner">
+                    {normLogs.length === 0 ? (
+                      <span className="text-neutral-500 italic">// Console Idle. State mapping loaded. Ready to run...</span>
+                    ) : (
+                      normLogs.map((log, index) => (
+                        <div key={index} className="leading-relaxed animate-fadeIn">
+                          <span className="text-neutral-600 mr-2 font-bold select-none">&gt;&gt;</span>
+                          {log}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                {normStatus === "success" && (
+                  <div className="p-3 bg-emerald-50 text-emerald-700 border border-emerald-150 rounded-xl text-xs font-bold leading-normal">
+                    ✓ Success: Master database normalization complete! Over 100 duplicate relationships resolved correctly offline.
+                  </div>
+                )}
+
+                {normStatus === "error" && (
+                  <div className="p-3 bg-red-50 text-red-600 border border-red-150 rounded-xl text-xs font-bold leading-normal">
+                    ⚠️ Error encountered. Check the log statements in the console panel above.
+                  </div>
+                )}
+              </div>
+
+              <div className="pt-4 border-t border-neutral-100 flex flex-wrap gap-2.5 justify-end items-center">
+                <button 
+                  type="button"
+                  disabled={normStatus === "running"}
+                  onClick={() => {
+                    setSubjectFormCode("");
+                    setSubjectFormName("");
+                    setSubjectFormSem(1);
+                    setSubjectFormDepts([]);
+                    setEditingSubject(null);
+                    setSubjectFormError("");
+                    setIsSubjectModalOpen(true);
+                  }}
+                  className="px-4 py-2 rounded-xl border border-neutral-200 hover:bg-neutral-50 text-neutral-600 hover:text-neutral-900 text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <Layers size={12} /> + Custom Subject
+                </button>
+
+                {normStatus !== "running" ? (
+                  <button 
+                    type="button"
+                    onClick={runDatabaseNormalization}
+                    className="px-5 py-2.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-black text-xs transition-all cursor-pointer shadow-md flex items-center gap-1.5"
+                  >
+                    <Sparkles size={13} />
+                    Run Normalization Suite
+                  </button>
+                ) : (
+                  <button 
+                    type="button"
+                    disabled
+                    className="px-5 py-2.5 rounded-xl bg-neutral-200 text-neutral-400 font-bold text-xs transition-all flex items-center gap-1.5"
+                  >
+                    <Sparkles size={13} className="animate-spin" />
+                    Running Migration...
+                  </button>
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Dynamic Subject Mapping Creator/Editor Modal */}
+      <AnimatePresence>
+        {isSubjectModalOpen && (
+          <div className="fixed inset-0 z-[2000] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                if (!subjectFormSaving) {
+                  setIsSubjectModalOpen(false);
+                }
+              }}
+              className="absolute inset-0 bg-neutral-950/70 backdrop-blur-md"
+            />
+
+            <motion.div 
+              initial={{ scale: 0.95, y: 15, opacity: 0 }}
+              animate={{ scale: 1, y: 0, opacity: 1 }}
+              exit={{ scale: 0.95, y: 15, opacity: 0 }}
+              transition={{ type: "spring", duration: 0.35 }}
+              className="relative w-full max-w-md bg-white rounded-[28px] border border-neutral-100 shadow-2xl p-6 md:p-8 overflow-hidden flex flex-col max-h-[85vh]"
+            >
+              <div className="absolute top-0 left-0 w-32 h-32 bg-orange-500/5 rounded-full filter blur-xl -translate-x-12 -translate-y-12" />
+              
+              <div className="relative flex justify-between items-start pb-4 border-b border-neutral-100 select-none mb-5">
+                <div>
+                  <span className="text-[9px] font-black uppercase text-orange-600 tracking-widest block mb-0.5">Subject Manager</span>
+                  <h3 className="text-base md:text-lg font-black text-neutral-900 font-sans tracking-tight leading-none">
+                    {editingSubject ? "Edit Central Subject" : "Create Central Subject"}
+                  </h3>
+                </div>
+                {!subjectFormSaving && (
+                  <button 
+                    onClick={() => setIsSubjectModalOpen(false)}
+                    className="p-1.5 rounded-full hover:bg-neutral-100 text-neutral-400 hover:text-neutral-900 transition-colors cursor-pointer"
+                  >
+                    <Minimize2 size={16} />
+                  </button>
+                )}
+              </div>
+
+              <form onSubmit={handleSaveSubject} className="space-y-4 overflow-y-auto flex-1 pr-1.5 scrollbar-thin">
+                {subjectFormError && (
+                  <div className="p-3 bg-red-50 text-red-600 border border-red-100 rounded-xl text-xs font-bold leading-normal">
+                    {subjectFormError}
+                  </div>
+                )}
+
+                {/* Subject Code (Input) */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-neutral-400 block font-sans">
+                    Subject Code
+                  </label>
+                  <input 
+                    type="text"
+                    required
+                    disabled={!!editingSubject}
+                    value={subjectFormCode}
+                    onChange={(e) => setSubjectFormCode(e.target.value.toUpperCase())}
+                    placeholder="EMA1101"
+                    className="w-full px-4 py-3 text-xs md:text-sm border border-neutral-200 hover:border-neutral-300 focus:border-orange-500 rounded-xl outline-none transition-all placeholder:text-neutral-400 text-neutral-900 font-bold uppercase disabled:bg-neutral-50 disabled:text-neutral-400"
+                  />
+                </div>
+
+                {/* Subject Title */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-neutral-400 block font-sans">
+                    Subject Title
+                  </label>
+                  <input 
+                    type="text"
+                    required
+                    value={subjectFormName}
+                    onChange={(e) => setSubjectFormName(e.target.value)}
+                    placeholder="Engineering Physics"
+                    className="w-full px-4 py-3 text-xs md:text-sm border border-neutral-200 hover:border-neutral-300 focus:border-orange-500 rounded-xl outline-none transition-all placeholder:text-neutral-400 text-neutral-900 font-bold"
+                  />
+                </div>
+
+                {/* Grid 2 Column (Semester and credits) */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-neutral-400 block font-sans">
+                      Semester (1-8)
+                    </label>
+                    <select
+                      value={subjectFormSem}
+                      onChange={(e) => setSubjectFormSem(parseInt(e.target.value))}
+                      className="w-full px-4 py-3 text-xs border border-neutral-200 hover:border-neutral-300 focus:border-orange-500 rounded-xl outline-none transition-all font-bold text-neutral-800"
+                    >
+                      {[1,2,3,4,5,6,7,8].map(s => (
+                        <option key={s} value={s}>Semester {s}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-neutral-400 block font-sans">
+                      Type (e.g. BS, PC)
+                    </label>
+                    <input 
+                      type="text"
+                      required
+                      value={subjectFormType}
+                      onChange={(e) => setSubjectFormType(e.target.value.toUpperCase())}
+                      placeholder="BS"
+                      className="w-full px-4 py-3 text-xs border border-neutral-200 hover:border-neutral-300 focus:border-orange-500 rounded-xl outline-none transition-all placeholder:text-neutral-400 text-neutral-900 font-bold"
+                    />
+                  </div>
+                </div>
+
+                {/* Department checklist */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-neutral-400 block font-sans">
+                    Linked Departments Mapping <span className="text-[9px] font-bold text-neutral-400 italic">(Multi-select checklist)</span>
+                  </label>
+                  <div className="grid grid-cols-2 gap-2 text-xs font-bold leading-normal text-neutral-800 max-h-40 overflow-y-auto border border-neutral-100 p-2.5 rounded-2xl bg-neutral-50/20">
+                    {DEPARTMENTS.map(dept => (
+                      <label key={dept} className="flex items-center gap-2 cursor-pointer hover:bg-neutral-100 p-1.5 rounded-lg transition-colors">
+                        <input 
+                          type="checkbox"
+                          checked={subjectFormDepts.includes(dept)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSubjectFormDepts(prev => [...prev, dept]);
+                            } else {
+                              setSubjectFormDepts(prev => prev.filter(d => d !== dept));
+                            }
+                          }}
+                          className="accent-orange-500"
+                        />
+                        <span className="truncate">{dept}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t border-neutral-100 flex gap-2.5 justify-end items-center font-sans">
+                  {!subjectFormSaving && (
+                    <button 
+                      type="button"
+                      onClick={() => setIsSubjectModalOpen(false)}
+                      className="px-4 py-2 rounded-xl border border-neutral-200 hover:bg-neutral-50 text-neutral-600 hover:text-neutral-900 text-xs font-bold transition-all cursor-pointer shadow-sm"
+                    >
+                      Cancel
+                    </button>
+                  )}
+                  <button 
+                    type="submit"
+                    disabled={subjectFormSaving}
+                    className="px-5 py-2 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-black text-xs transition-all cursor-pointer shadow-md disabled:opacity-50 disabled:pointer-events-none flex items-center gap-1.5"
+                  >
+                    {subjectFormSaving ? "Saving subject..." : "Save Subject Mapping"}
                   </button>
                 </div>
               </form>

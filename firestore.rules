@@ -35,7 +35,8 @@ service cloud.firestore {
       return isEmailVerified() && request.auth.token.email in [
         'jampanarithesh74@gmail.com',
         'jampanapadmaja7474@gmail.com',
-        '25eg112c49@anurag.edu.in'
+        '25eg112c49@anurag.edu.in',
+        'ritheshj899@gmail.com'
       ];
     }
 
@@ -48,19 +49,35 @@ service cloud.firestore {
              admin.email == request.auth.token.email;
     }
 
+    function isValidSubject(sub) {
+      return sub.keys().hasAll(['subjectCode', 'subjectName', 'semester', 'linked_departments']) &&
+             sub.keys().size() >= 4 && sub.keys().size() <= 8 &&
+             sub.subjectCode is string && sub.subjectCode.size() <= 50 &&
+             sub.subjectName is string && sub.subjectName.size() <= 500 &&
+             sub.semester is number &&
+             sub.linked_departments is list &&
+             (!('credits' in sub) || sub.credits is number) &&
+             (!('type' in sub) || sub.type is string) &&
+             (!('units' in sub) || sub.units is list) &&
+             (!('updatedAt' in sub) || sub.updatedAt == request.time);
+    }
+
     function isValidResource(res) {
-      return res.keys().hasAll(['branch', 'sem', 'subjectCode', 'type', 'title', 'fileUrl', 'uploadedAt', 'uploadedBy']) &&
-             res.keys().size() >= 8 && res.keys().size() <= 10 &&
-             res.branch is string && res.branch.size() <= 100 &&
-             res.sem is number &&
-             res.subjectCode is string && res.subjectCode.size() <= 50 &&
+      return res.keys().hasAll(['subjectCode', 'type', 'title', 'uploadedAt', 'uploadedBy']) &&
+             res.keys().size() >= 5 && res.keys().size() <= 13 &&
+             res.subjectCode is string && res.subjectCode.size() <= 128 &&
              res.type is string && res.type in ['notes', 'pyqs'] &&
              res.title is string && res.title.size() <= 500 &&
-             res.fileUrl is string && res.fileUrl.size() <= 2000 &&
              res.uploadedAt == request.time &&
              res.uploadedBy == request.auth.uid &&
+             (!('fileUrl' in res) || res.fileUrl is string) &&
+             (!('driveLink' in res) || res.driveLink is string) &&
              (!('unit' in res) || res.unit is number) &&
-             (!('year' in res) || res.year is number);
+             (!('year' in res) || res.year is number) &&
+             (!('branch' in res) || res.branch is string) &&
+             (!('sem' in res) || res.sem is number) &&
+             (!('semester' in res) || res.semester is number) &&
+             (!('department_visibility' in res) || res.department_visibility is list);
     }
 
     // Collection Rules
@@ -71,10 +88,14 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    match /resources/{resourceId} {
-      allow read: if true; // Publicly accessible
-      allow list: if true;
+    match /subjects/{subjectCode} {
+      allow read, list: if true; // Public access to subjects
+      allow create, update: if isAdmin() && isValidSubject(incoming());
+      allow delete: if isAdmin();
+    }
 
+    match /resources/{resourceId} {
+      allow read, list: if true; // Public access to resources
       allow create: if isAdmin() && isValidResource(incoming());
       allow update: if isAdmin() && isValidResource(incoming()) && incoming().uploadedBy == existing().uploadedBy;
       allow delete: if isAdmin();

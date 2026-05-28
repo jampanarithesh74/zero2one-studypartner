@@ -10,9 +10,25 @@
       },
       "required": ["email", "addedAt"]
     },
+    "Subject": {
+      "title": "Subject",
+      "description": "Normalized subject-centric database record serving multiple departments",
+      "type": "object",
+      "properties": {
+        "subjectCode": { "type": "string" },
+        "subjectName": { "type": "string" },
+        "semester": { "type": "number" },
+        "linked_departments": { "type": "array" },
+        "credits": { "type": "number" },
+        "type": { "type": "string" },
+        "units": { "type": "array" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["subjectCode", "subjectName", "semester", "linked_departments"]
+    },
     "Resource": {
       "title": "Resource",
-      "description": "Academic resource (notes or PYQs)",
+      "description": "Academic resource (notes or PYQs) referenced by subject code relation",
       "type": "object",
       "properties": {
         "branch": { "type": "string" },
@@ -21,12 +37,15 @@
         "type": { "type": "string" },
         "title": { "type": "string" },
         "fileUrl": { "type": "string" },
+        "driveLink": { "type": "string" },
         "uploadedAt": { "type": "string", "format": "date-time" },
         "uploadedBy": { "type": "string" },
         "unit": { "type": "number" },
-        "year": { "type": "number" }
+        "year": { "type": "number" },
+        "department_visibility": { "type": "array" },
+        "semester": { "type": "number" }
       },
-      "required": ["branch", "sem", "subjectCode", "type", "title", "fileUrl", "uploadedAt", "uploadedBy"]
+      "required": ["subjectCode", "type", "title", "uploadedAt", "uploadedBy"]
     }
   },
   "firestore": {
@@ -34,9 +53,13 @@
       "schema": "Admin",
       "description": "Platform administrators"
     },
+    "subjects/{subjectCode}": {
+      "schema": "Subject",
+      "description": "Centralized database subjects"
+    },
     "resources/{resourceId}": {
       "schema": "Resource",
-      "description": "Academic resources collection"
+      "description": "Centralized resources collection mapped by subjectCode"
     }
   }
 }
