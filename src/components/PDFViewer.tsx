@@ -1,17 +1,19 @@
 import React, { useState, useEffect, useRef } from "react";
-import { AlertCircle, RefreshCw } from "lucide-react";
+import { AlertCircle, RefreshCw, Layers, ArrowUpRight, Download, ExternalLink } from "lucide-react";
 
 interface PDFViewerProps {
   fileUrl: string;
   rotation: number; // 0, 90, 180, 270
   isFullscreen?: boolean;
+  title?: string;
+  driveLink?: string;
 }
 
 // Fixed stable CDN URLs for pdf.js v3.11.174
 const PDFJS_SRC = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
 const PDFJS_WORKER_SRC = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 
-export function PDFViewer({ fileUrl, rotation, isFullscreen = false }: PDFViewerProps) {
+export function PDFViewer({ fileUrl, rotation, isFullscreen = false, title, driveLink }: PDFViewerProps) {
   const [isPdfJsReady, setIsPdfJsReady] = useState(false);
   const [loading, setLoading] = useState(true);
   const [numPages, setNumPages] = useState<number>(0);
@@ -108,18 +110,68 @@ export function PDFViewer({ fileUrl, rotation, isFullscreen = false }: PDFViewer
   };
 
   if (fallbackMode) {
-    // Elegant fallback to Iframe Docs viewer if CORS/Cdn loads fail
+    // Beautiful, high-performance direct-access card fallback in ZERO2ONE styling
     return (
-      <iframe
-        src={`https://docs.google.com/viewer?url=${encodeURIComponent(fileUrl)}&embedded=true`}
-        className="w-full h-full border-none bg-white"
-        title="Notes Fallback Embedded Preview"
-        style={{
-          transform: `rotate(${rotation}deg)`,
-          transformOrigin: "center center",
-          transition: "transform 0.3s cubic-bezier(0.16, 1, 0.3, 1)",
-        }}
-      />
+      <div className="w-full h-full min-h-[300px] bg-white border border-orange-100 rounded-2xl p-6 md:p-8 flex flex-col items-center justify-center text-center space-y-5 animate-fadeIn select-none">
+        {/* Resource Icon Badge */}
+        <div className="w-16 h-16 rounded-2xl bg-orange-50 border border-orange-100 flex items-center justify-center text-orange-500 relative shrink-0">
+          <Layers size={30} />
+          {driveLink && (
+            <div className="absolute -bottom-1 -right-1 bg-white border border-neutral-100 text-neutral-800 rounded-full p-1 shadow-sm">
+              <ExternalLink size={10} />
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-2 max-w-sm shrink-0">
+          <h4 className="font-extrabold text-neutral-900 text-base md:text-lg leading-tight tracking-tight">
+            {title || "Study Notes Document"}
+          </h4>
+          <p className="text-xs text-neutral-550 font-medium leading-relaxed">
+            {driveLink 
+              ? "Dual delivery enabled: Google Drive alternative link is ready for immediate study."
+              : "Connection fallback: Download study notes immediately or open in external browser tab."}
+          </p>
+          <div className="pt-1">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black bg-orange-100 text-orange-900 uppercase tracking-widest border border-orange-200">
+              {driveLink ? "Google Drive Ready" : "Document Ready"}
+            </span>
+          </div>
+        </div>
+
+        <div className="flex flex-col sm:flex-row gap-3 w-full max-w-xs justify-center shrink-0">
+          {driveLink ? (
+            <a 
+              href={driveLink}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center justify-center gap-1.5 px-6 py-3 bg-orange-500 hover:bg-orange-600 text-white font-black rounded-xl text-xs md:text-sm shadow-md transition-all active:scale-[0.98] cursor-pointer"
+            >
+              Open Notes <ArrowUpRight size={14} />
+            </a>
+          ) : (
+            <a 
+              href={fileUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center justify-center gap-1.5 px-6 py-3 bg-orange-500 hover:bg-orange-600 text-white font-black rounded-xl text-xs md:text-sm shadow-md transition-all active:scale-[0.98] cursor-pointer"
+            >
+              Open Notes <ArrowUpRight size={14} />
+            </a>
+          )}
+
+          {fileUrl && (
+            <a 
+              href={fileUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center justify-center gap-1.5 px-4 py-3 bg-neutral-50 hover:bg-neutral-100 border border-neutral-200 text-neutral-750 font-bold rounded-xl text-xs sm:text-sm transition-all active:scale-[0.98] cursor-pointer"
+            >
+              <Download size={13} /> Download PDF
+            </a>
+          )}
+        </div>
+      </div>
     );
   }
 

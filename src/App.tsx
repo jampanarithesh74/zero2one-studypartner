@@ -1266,17 +1266,42 @@ export default function App() {
                   {/* Right: Embedded Preview / Admin Upload Box (7 portions out of 12) */}
                   <div className="lg:col-span-7">
                     {expandedUnit !== null ? (
-                      <div className="bg-white rounded-[24px] border border-neutral-100 shadow-md overflow-hidden h-[450px] md:h-[550px] flex flex-col sticky top-28">
-                                              {/* Preview Topbar Header */}
+                      <div className="bg-white rounded-[24px] border border-neutral-100 shadow-md overflow-hidden flex flex-col sticky top-28 h-auto w-full">
+                        {/* Preview Topbar Header */}
                         <div className="p-4 md:p-5 border-b border-neutral-100 bg-neutral-50/50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 select-none">
                           <h4 className="text-xs md:text-sm font-extrabold text-neutral-900">
                             Unit 0{expandedUnit + 1} Notes Resource
                           </h4>
                           
-                          <div className="flex items-center gap-2 w-full sm:w-auto">
+                          <div className="hidden sm:flex items-center gap-2 sm:w-auto">
                             {(() => {
                               const activeNote = uploadedResources.find(r => r.subjectCode === activeSubject && r.type === "notes" && r.unit === expandedUnit + 1);
                               if (activeNote) {
+                                if (activeNote.driveLink) {
+                                  // Under Temporary Exam-Season Fallback Mode: prioritize direct external actions
+                                  return (
+                                    <>
+                                      {activeNote.fileUrl && (
+                                        <a 
+                                          href={activeNote.fileUrl}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-neutral-100 hover:bg-neutral-200 text-neutral-750 text-xs font-bold transition-all border border-neutral-250 cursor-pointer shadow-sm active:scale-[0.98]"
+                                        >
+                                          <Download size={12} /> Download PDF
+                                        </a>
+                                      )}
+                                      <a 
+                                        href={activeNote.driveLink}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-orange-500 text-white text-xs font-bold hover:bg-orange-600 transition-all shadow-sm w-full sm:w-auto active:scale-[0.98]"
+                                      >
+                                        <ExternalLink size={12} /> Open Drive
+                                      </a>
+                                    </>
+                                  );
+                                }
                                 return (
                                   <>
                                     {activeNote.fileUrl && (
@@ -1320,16 +1345,6 @@ export default function App() {
                                         </a>
                                       </>
                                     )}
-                                    {activeNote.driveLink && (
-                                      <a 
-                                        href={activeNote.driveLink}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-neutral-900 text-white text-xs font-bold hover:bg-black transition-all shadow-sm w-full sm:w-auto active:scale-[0.98]"
-                                      >
-                                        <ExternalLink size={12} /> Open Drive
-                                      </a>
-                                    )}
                                   </>
                                 );
                               } else {
@@ -1343,26 +1358,26 @@ export default function App() {
                           </div>
                         </div>
 
-                        {/* Preview Body Area */}
-                        <div className="flex-1 p-5 md:p-8 overflow-y-auto space-y-6">
+                        {/* Preview Body Area - Optimized for Fallback Exam-Season Mode (No internal scrolling, adapts to content height) */}
+                        <div className="p-5 md:p-8 space-y-6 w-full h-auto overflow-visible">
                           {(() => {
                             const activeNote = uploadedResources.find(r => r.subjectCode === activeSubject && r.type === "notes" && r.unit === expandedUnit + 1);
                             if (activeNote) {
                               return (
-                                <div className="h-full flex flex-col animate-fadeIn">
+                                <div className="flex flex-col animate-fadeIn w-full h-auto">
                                   {/* Metadata Banner with Edit/Delete for Admin */}
-                                  <div className="px-5 py-4 bg-orange-50/50 border border-orange-500/20 rounded-2xl mb-4 relative group/info flex items-center justify-between gap-4">
+                                  <div className="px-5 py-4 bg-orange-50/50 border border-orange-500/20 rounded-2xl mb-4 relative group/info flex items-center justify-between gap-4 select-none shrink-0">
                                     <div className="space-y-0.5 min-w-0">
                                       <h5 className="font-extrabold text-orange-950 text-xs md:text-sm pr-6 leading-normal truncate">
                                         {activeNote.title}
                                       </h5>
-                                      <p className="text-[10px] text-orange-700/80">
-                                        {activeNote.driveLink ? "Dual delivery enabled: Google Drive + Supabase Cloud Server." : "Premium quality handwriting document ready for academic study."}
+                                      <p className="text-[10px] text-orange-700/80 font-semibold">
+                                        {activeNote.driveLink ? "Dual delivery enabled: Google Drive + CDN Backup." : "Academic resource ready for immediate exam preparation."}
                                       </p>
                                     </div>
                                     
                                     {isAdmin && (
-                                      <div className="flex items-center gap-1.5 shrink-0 self-start">
+                                      <div className="flex items-center gap-1.5 shrink-0 self-center">
                                         <button 
                                           onClick={() => {
                                             setEditingResource(activeNote);
@@ -1395,67 +1410,67 @@ export default function App() {
                                     )}
                                   </div>
                                   
-                                  {/* High-Performance Same-Origin canvas PDF viewer */}
-                                  {activeNote.fileUrl ? (
-                                    <div ref={containerRef} className="relative flex-1 w-full min-h-[300px] h-full rounded-2xl overflow-hidden border border-neutral-200 bg-neutral-900 shadow-xl">
-                                      <PDFViewer fileUrl={activeNote.fileUrl} rotation={previewRotation} />
-                                    </div>
-                                  ) : (
-                                    /* Direct Google Drive Display Card (If fileUrl is omitted & only Drive link is present for handwritten PDFs) */
-                                    <div className="flex-1 border-2 border-dashed border-orange-200 bg-orange-50/10 rounded-2xl p-6 flex flex-col items-center justify-center text-center space-y-4 animate-fadeIn">
-                                      <div className="w-14 h-14 rounded-2xl bg-orange-500/10 text-orange-600 flex items-center justify-center">
-                                        <Layers size={28} />
+                                  {/* Beautiful, High-Performance Google Drive / direct link Resource Card in ZERO2ONE style */}
+                                  <div className="w-full h-auto flex flex-col items-center justify-center p-6 md:p-8 text-center bg-white border border-orange-100 rounded-2xl shadow-sm hover:shadow-orange-400/5 transition-all duration-300 animate-fadeIn">
+                                    {/* Google Drive icon representation */}
+                                    <div className="w-16 h-16 rounded-2xl bg-orange-50 border border-orange-100 flex items-center justify-center text-orange-500 mb-5 relative shrink-0">
+                                      <Layers size={30} />
+                                      <div className="absolute -bottom-1 -right-1 bg-white border border-neutral-100 text-neutral-800 rounded-full p-1 shadow-sm">
+                                        <ExternalLink size={10} />
                                       </div>
-                                      <div className="space-y-1.5 max-w-sm">
-                                        <p className="font-extrabold text-neutral-900 text-sm md:text-base leading-none">External Handwriting Notes</p>
-                                        <p className="text-xs text-neutral-550 leading-relaxed font-semibold">
-                                          This booklet of hand-written guidelines is hosted securely on Google Drive to manage data bandwidth limits.
-                                        </p>
-                                      </div>
-                                      {activeNote.driveLink ? (
-                                        <a 
-                                          href={activeNote.driveLink}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          className="px-6 py-3 bg-orange-500 hover:bg-orange-600 text-white font-black rounded-xl text-xs md:text-sm flex items-center gap-2 shadow-md transition-all active:scale-[0.98] cursor-pointer"
-                                        >
-                                          Open notes on Google Drive <ArrowUpRight size={14} />
-                                        </a>
-                                      ) : (
-                                        <p className="text-xs text-red-500 font-bold">Error: Connection links are missing.</p>
-                                      )}
                                     </div>
-                                  )}
+                                    
+                                    <div className="space-y-2 max-w-md mb-6 shrink-0 select-none">
+                                      <h4 className="font-extrabold text-neutral-900 text-base md:text-lg leading-tight tracking-tight">
+                                        {activeNote.title || `Unit ${expandedUnit + 1} Study Notes`}
+                                      </h4>
+                                      <p className="text-xs text-neutral-500 font-medium leading-relaxed">
+                                        Active Direct Access Mode is enabled. View the study material instantly without preview errors, delays, or blank pages.
+                                      </p>
+                                      <div className="pt-1.5">
+                                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black bg-orange-100 text-orange-950 uppercase tracking-widest border border-orange-200">
+                                          {activeNote.driveLink ? "Open in Google Drive" : "Document Active"}
+                                        </span>
+                                      </div>
+                                    </div>
 
-                                  {/* Inline Falling Back Notice underneath PDF Viewer */}
-                                  {activeNote.driveLink && activeNote.fileUrl && (
-                                    <div className="mt-3 p-3 bg-neutral-50 rounded-xl border border-neutral-100 flex items-center justify-between gap-3 text-[10px] md:text-xs text-neutral-650 select-none animate-fadeIn transition-colors hover:bg-neutral-100">
-                                      <div className="flex items-center gap-2">
-                                        <div className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-pulse shrink-0" />
-                                        <span>Having trouble loading notes? Play via backup.</span>
-                                      </div>
+                                    {/* Actions: Stacks vertically as nice big targets on mobile, maps inline on desktop */}
+                                    <div className="flex flex-col sm:flex-row gap-3 w-full max-w-xs justify-center shrink-0">
+                                      {/* primary large orange action driver */}
                                       <a 
-                                        href={activeNote.driveLink}
+                                        href={activeNote.driveLink || activeNote.fileUrl}
                                         target="_blank"
                                         rel="noreferrer"
-                                        className="text-orange-600 font-extrabold hover:text-orange-700 flex items-center gap-0.5 cursor-pointer"
+                                        className="flex items-center justify-center gap-2 px-6 py-3.5 bg-orange-500 hover:bg-orange-600 text-white font-black rounded-xl text-xs sm:text-sm shadow-md hover:shadow-lg transition-all active:scale-[0.98] cursor-pointer w-full"
                                       >
-                                        Google Drive <ArrowUpRight size={12} />
+                                        Open Notes <ArrowUpRight size={14} />
                                       </a>
+
+                                      {/* secondary download action trigger if uploaded */}
+                                      {activeNote.fileUrl && (
+                                        <a 
+                                          href={activeNote.fileUrl}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="flex items-center justify-center gap-2 px-5 py-3.5 bg-neutral-50 border border-neutral-250 hover:bg-neutral-100 text-neutral-750 font-bold rounded-xl text-xs sm:text-sm shadow-sm transition-all active:scale-[0.98] cursor-pointer w-full"
+                                        >
+                                          <Download size={13} /> Download PDF
+                                        </a>
+                                      )}
                                     </div>
-                                  )}
+                                  </div>
                                 </div>
                               );
                             } else if (isAdmin) {
                               return (
                                 /* Beautiful drop box for Administrator upload */
-                                <div className="flex flex-col items-center justify-center h-full text-center space-y-5 border-2 border-dashed border-neutral-200 bg-neutral-50/50 rounded-2xl p-6">
-                                  <div className="w-12 h-12 rounded-2xl bg-orange-500/10 border border-orange-500/20 flex items-center justify-center text-orange-500 shadow-inner">
+                                <div className="flex flex-col items-center justify-center h-auto text-center space-y-5 border-2 border-dashed border-neutral-200 bg-neutral-50/50 rounded-2xl p-6 py-8 md:py-12 select-none w-full">
+                                  <div className="w-12 h-12 rounded-2xl bg-orange-500/10 border border-orange-500/20 flex items-center justify-center text-orange-500 shadow-inner shrink-0">
                                     <Plus size={24} />
                                   </div>
-                                  <div className="space-y-1 select-none">
+                                  <div className="space-y-1">
                                     <p className="font-extrabold text-neutral-800 text-sm">Upload Unit {expandedUnit + 1} Study Notes</p>
-                                    <p className="text-xs text-neutral-400 max-w-xs mx-auto">Configure a PDF record and/or Google Drive alternative link.</p>
+                                    <p className="text-xs text-neutral-400 max-w-xs mx-auto leading-relaxed">Configure a PDF record and/or Google Drive alternative link.</p>
                                   </div>
                                   <button 
                                     onClick={() => {
@@ -1479,13 +1494,13 @@ export default function App() {
                             } else {
                               return (
                                 /* Students Empty view */
-                                <div className="flex flex-col items-center justify-center h-full text-center space-y-4">
-                                  <div className="w-14 h-14 rounded-2xl bg-neutral-50 flex items-center justify-center text-neutral-300 shadow-inner">
+                                <div className="flex flex-col items-center justify-center h-auto text-center space-y-4 py-8 md:py-12 select-none w-full">
+                                  <div className="w-14 h-14 rounded-2xl bg-neutral-50 flex items-center justify-center text-neutral-300 shadow-inner shrink-0">
                                     <FileText size={28} />
                                   </div>
-                                  <div className="space-y-1 select-none">
+                                  <div className="space-y-1">
                                     <p className="font-extrabold text-neutral-800 text-sm">No Notes Uploaded</p>
-                                    <p className="text-xs text-neutral-400 max-w-xs mx-auto">This academic resource has not been uploaded by the course coordinator yet.</p>
+                                    <p className="text-xs text-neutral-400 max-w-xs mx-auto leading-relaxed">This academic resource has not been uploaded by the course coordinator yet.</p>
                                   </div>
                                 </div>
                               );
