@@ -4,12 +4,13 @@
  */
 
 import { motion, AnimatePresence } from "motion/react";
-import { ChevronRight, Sparkles, ArrowLeft, BookOpen, Clock, Award, FileText, Download, Layers, Shield, LogIn, LogOut, Plus, Trash2, Maximize2, Minimize2, Instagram, ArrowUpRight, Edit2, ExternalLink, RotateCcw, RotateCw } from "lucide-react";
+import { ChevronRight, Sparkles, ArrowLeft, BookOpen, Clock, Award, FileText, Download, Layers, Shield, LogIn, LogOut, Plus, Trash2, Maximize2, Minimize2, Instagram, ArrowUpRight, Edit2, ExternalLink, RotateCcw, RotateCw, X } from "lucide-react";
 import { useState, useEffect, FormEvent, useRef } from "react";
 import { DEPARTMENTS, SYLLABUS_MAP, SUBJECT_DETAILS } from "./data/syllabus";
-import { auth, db, googleProvider, ALLOWED_ADMIN_EMAILS, handleFirestoreError, OperationType } from "./lib/firebase";
+import { auth, db, googleProvider, ALLOWED_ADMIN_EMAILS, handleFirestoreError, OperationType, storage } from "./lib/firebase";
 import { onAuthStateChanged, signInWithPopup, signOut, User } from "firebase/auth";
-import { doc, getDoc, setDoc, collection, addDoc, query, where, onSnapshot, serverTimestamp, deleteDoc, updateDoc, getDocs, writeBatch } from "firebase/firestore";
+import { doc, getDoc, setDoc, collection, addDoc, query, where, onSnapshot, serverTimestamp, deleteDoc, updateDoc, getDocs, writeBatch, Timestamp } from "firebase/firestore";
+import { ref as storageRef, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { PDFViewer } from "./components/PDFViewer";
 
 type ViewState = "year-selection" | "dept-selection" | "sem-selection" | "choice-selection" | "syllabus-view" | "resources-view";
@@ -70,6 +71,32 @@ export default function App() {
   const [formFile, setFormFile] = useState<File | null>(null);
   const [formYear, setFormYear] = useState<number>(new Date().getFullYear());
   const [formError, setFormError] = useState("");
+
+  // Notifications & Announcements State
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [dismissedIds, setDismissedIds] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("dismissedNotifications") || "[]");
+    } catch {
+      return [];
+    }
+  });
+
+  // Admin Announcement Form State
+  const [activeAdminTab, setActiveAdminTab] = useState<"norm" | "notifications">("norm");
+  const [notifTitle, setNotifTitle] = useState("");
+  const [notifDescription, setNotifDescription] = useState("");
+  const [notifType, setNotifType] = useState<"text" | "image" | "link">("text");
+  const [notifImageSource, setNotifImageSource] = useState<"upload" | "url">("upload");
+  const [notifImageUrl, setNotifImageUrl] = useState("");
+  const [notifFile, setNotifFile] = useState<File | null>(null);
+  const [notifButtonText, setNotifButtonText] = useState("");
+  const [notifButtonUrl, setNotifButtonUrl] = useState("");
+  const [notifPriority, setNotifPriority] = useState<"low" | "medium" | "high">("medium");
+  const [notifExpiresAt, setNotifExpiresAt] = useState("");
+  const [notifSaving, setNotifSaving] = useState(false);
+  const [notifError, setNotifError] = useState("");
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
 
   // PDF Rotation States & Dimension Tracking
   const [previewRotation, setPreviewRotation] = useState<number>(0);
@@ -189,6 +216,185 @@ export default function App() {
 
     return () => unsubscribe();
   }, []);
+
+  // Fetch global announcements in real time
+  useEffect(() => {
+    const q = query(
+      collection(db, "notifications")
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const list = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data
+        };
+      });
+      setNotifications(list);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, "notifications");
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const activeNotifications = notifications.filter(notif => {
+    // 0. Filter out inactive ones for regular users
+    if (!notif.active) return false;
+
+    // 1. Filter out if dismissed locally by this user
+    if (dismissedIds.includes(notif.id)) return false;
+
+    // 2. Filter out if expired
+    if (notif.expiresAt) {
+      const expiryDate = notif.expiresAt.toDate ? notif.expiresAt.toDate() : new Date(notif.expiresAt);
+      if (new Date() > expiryDate) return false;
+    }
+
+    return true;
+  }).sort((a, b) => {
+    // 3. Sort high -> medium -> low, then createdAt dec
+    const weights: Record<string, number> = { high: 3, medium: 2, low: 1 };
+    const wA = weights[a.priority] || 1;
+    const wB = weights[b.priority] || 1;
+
+    if (wA !== wB) return wB - wA;
+
+    const tA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
+    const tB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
+    return tB - tA;
+  });
+
+  const handleDismissNotification = (id: string) => {
+    const updated = [...dismissedIds, id];
+    setDismissedIds(updated);
+    localStorage.setItem("dismissedNotifications", JSON.stringify(updated));
+  };
+
+  const handlePublishNotification = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!notifTitle || !notifDescription) {
+      setNotifError("Please fill out all required fields.");
+      return;
+    }
+
+    if (notifType === "image") {
+      if (notifImageSource === "url" && !notifImageUrl.trim()) {
+        setNotifError("Please specify a valid image URL.");
+        return;
+      }
+      if (notifImageSource === "upload" && !notifFile) {
+        setNotifError("Please select an image file to upload.");
+        return;
+      }
+    }
+
+    setNotifSaving(true);
+    setNotifError("");
+    setUploadProgress(null);
+
+    try {
+      let imageUrl = "";
+
+      // Handle image input
+      if (notifType === "image") {
+        if (notifImageSource === "url") {
+          imageUrl = notifImageUrl.trim();
+        } else if (notifImageSource === "upload" && notifFile) {
+          setUploadProgress(0);
+          const fileExtension = notifFile.name.split(".").pop();
+          const storagePath = `notifications/images/${Date.now()}-${Math.random().toString(36).substring(2, 7)}.${fileExtension}`;
+          const imageRef = storageRef(storage, storagePath);
+          
+          const uploadTask = uploadBytesResumable(imageRef, notifFile);
+
+          imageUrl = await new Promise<string>((resolve, reject) => {
+            // Set up a safeguard timeout (e.g. 15 seconds) so it doesn't spin infinitely if Storage is blocked/unconfigured
+            const timer = setTimeout(() => {
+              uploadTask.cancel();
+              reject(new Error("Upload timed out (15s). Browser sandbox may be blocking direct Firebase Storage uploads (CORS). Please use the 'Direct Image URL' option instead!"));
+            }, 15000);
+
+            uploadTask.on(
+              "state_changed",
+              (snapshot) => {
+                const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+                setUploadProgress(Math.round(progress));
+              },
+              (error) => {
+                clearTimeout(timer);
+                reject(error);
+              },
+              async () => {
+                clearTimeout(timer);
+                try {
+                  const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
+                  resolve(downloadUrl);
+                } catch (err) {
+                  reject(err);
+                }
+              }
+            );
+          });
+        }
+      }
+
+      // Add to Firestore notifications/ collection
+      await addDoc(collection(db, "notifications"), {
+        title: notifTitle,
+        description: notifDescription,
+        type: notifType,
+        imageUrl: imageUrl || null,
+        buttonText: notifButtonText || null,
+        buttonUrl: notifButtonUrl || null,
+        priority: notifPriority,
+        active: true,
+        createdAt: serverTimestamp(),
+        expiresAt: notifExpiresAt ? Timestamp.fromDate(new Date(`${notifExpiresAt}T23:59:59`)) : null
+      });
+
+      // Clear Form state values
+      setNotifTitle("");
+      setNotifDescription("");
+      setNotifType("text");
+      setNotifImageSource("upload");
+      setNotifImageUrl("");
+      setNotifFile(null);
+      setNotifButtonText("");
+      setNotifButtonUrl("");
+      setNotifPriority("medium");
+      setNotifExpiresAt("");
+      setNotifError("");
+    } catch (err: any) {
+      console.error(err);
+      setNotifError(err.message || "Failed to publish announcement.");
+    } finally {
+      setNotifSaving(false);
+      setUploadProgress(null);
+    }
+  };
+
+  const handleToggleActiveNotification = async (id: string, currentActive: boolean) => {
+    try {
+      await updateDoc(doc(db, "notifications", id), {
+        active: !currentActive
+      });
+    } catch (e: any) {
+      console.error(e);
+      alert("Error toggling active state: " + e.message);
+    }
+  };
+
+  const handleDeleteNotification = async (id: string) => {
+    if (!window.confirm("Are you sure you want to permanently delete this announcement?")) return;
+    try {
+      await deleteDoc(doc(db, "notifications", id));
+    } catch (e: any) {
+      console.error(e);
+      alert("Error deleting announcement: " + e.message);
+    }
+  };
 
   // Fetch dynamic subjects from Firestore
   useEffect(() => {
@@ -1711,6 +1917,110 @@ export default function App() {
     );
   };
 
+  const renderNotificationsList = () => {
+    return (
+      <AnimatePresence>
+        {activeNotifications.length > 0 && (() => {
+          const currentNotif = activeNotifications[0];
+          return (
+            <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 font-sans animate-fadeIn" id="notifications-overlay-container">
+              {/* Backdrop overlay */}
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => handleDismissNotification(currentNotif.id)}
+                className="absolute inset-0 bg-neutral-950/60 backdrop-blur-[2px] cursor-pointer"
+              />
+
+              {/* Centered Modal Content Card */}
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9, y: 15 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.9, y: 15 }}
+                transition={{ type: "spring", damping: 25, stiffness: 350 }}
+                className="relative w-full max-w-lg bg-white rounded-[28px] border border-neutral-100 shadow-2xl p-6 md:p-8 overflow-y-auto max-h-[80vh] flex flex-col text-left z-10"
+              >
+                {/* Top Close Button icon */}
+                <button
+                  onClick={() => handleDismissNotification(currentNotif.id)}
+                  className="absolute top-4 right-4 flex h-8 w-8 items-center justify-center rounded-full bg-neutral-50 text-neutral-400 border border-neutral-100 hover:bg-neutral-100 hover:text-neutral-900 transition-colors shadow-sm cursor-pointer z-10"
+                  title="Dismiss"
+                >
+                  <X size={13} />
+                </button>
+
+                <div className="flex flex-col gap-4 mt-2">
+                  {/* Header badges */}
+                  <div className="flex flex-wrap items-center gap-2 select-none">
+                    <span className="flex h-5 items-center rounded-full bg-orange-500/10 border border-orange-500/20 px-2.5 text-[9px] font-black uppercase tracking-widest text-orange-600">
+                      📢 Announcement
+                    </span>
+                    {currentNotif.priority === "high" && (
+                      <span className="flex h-5 items-center rounded-full bg-red-500/10 border border-red-500/20 px-2.5 text-[9px] font-black uppercase tracking-widest text-red-500 animate-pulse">
+                        🔥 HIGH PRIORITY
+                      </span>
+                    )}
+                    {currentNotif.priority === "medium" && (
+                      <span className="flex h-5 items-center rounded-full bg-amber-500/10 border border-amber-500/20 px-2.5 text-[9px] font-black uppercase tracking-widest text-[#d97706]">
+                        ⚡ Update
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Image display banner */}
+                  {currentNotif.type === "image" && currentNotif.imageUrl && (
+                    <div className="relative aspect-[16/9] w-full overflow-hidden rounded-2xl bg-neutral-50 border border-neutral-100 shadow-sm">
+                      <img
+                        src={currentNotif.imageUrl}
+                        alt={currentNotif.title}
+                        referrerPolicy="no-referrer"
+                        className="h-full w-full object-cover"
+                      />
+                    </div>
+                  )}
+
+                  {/* Title & Description */}
+                  <div className="space-y-1.5 select-text">
+                    <h3 className="text-base md:text-xl font-black text-neutral-900 tracking-tight leading-snug animate-fadeIn">
+                      {currentNotif.title}
+                    </h3>
+                    <p className="text-neutral-500 text-xs md:text-sm font-light leading-relaxed whitespace-pre-line break-words pt-1 select-text">
+                      {currentNotif.description}
+                    </p>
+                  </div>
+
+                  {/* Button links and close actions */}
+                  <div className="flex flex-col gap-2.5 pt-2">
+                    {currentNotif.buttonUrl && (
+                      <a
+                        href={currentNotif.buttonUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-orange-500 py-3 text-xs font-black uppercase tracking-wider text-white transition-all hover:bg-orange-600 hover:scale-[1.005] active:scale-[0.995] shadow-md hover:shadow-orange-500/10 cursor-pointer border border-orange-500"
+                      >
+                        {currentNotif.buttonText || "Open Update"}
+                        <ExternalLink size={12} />
+                      </a>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => handleDismissNotification(currentNotif.id)}
+                      className="inline-flex w-full items-center justify-center rounded-xl bg-neutral-50 hover:bg-neutral-100 py-3 text-xs font-black uppercase tracking-wider text-neutral-500 hover:text-neutral-800 transition-all cursor-pointer border border-neutral-200"
+                    >
+                      Dismiss & Close
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+          );
+        })()}
+      </AnimatePresence>
+    );
+  };
+
   const renderFooter = () => (
     <footer className="bg-neutral-50/40 border-t border-neutral-100/60 py-6 md:py-8 px-6 md:px-8 mt-auto">
       <div className="max-w-6xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-4 sm:gap-8">
@@ -2038,6 +2348,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#fafaf9] text-[#0a0a0a] font-sans selection:bg-orange-100">
+      {renderNotificationsList()}
       <AnimatePresence mode="wait">
         {viewState === "year-selection" && (
           <motion.div key="year" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
@@ -2379,98 +2690,364 @@ export default function App() {
               animate={{ scale: 1, y: 0, opacity: 1 }}
               exit={{ scale: 0.95, y: 15, opacity: 0 }}
               transition={{ type: "spring", duration: 0.35 }}
-              className="relative w-full max-w-xl bg-white rounded-[28px] border border-neutral-100 shadow-2xl p-6 md:p-8 overflow-hidden flex flex-col max-h-[90vh]"
+              className={`relative w-full ${activeAdminTab === "notifications" ? "max-w-3xl" : "max-w-xl"} bg-white rounded-[28px] border border-neutral-100 shadow-2xl p-6 md:p-8 overflow-hidden flex flex-col max-h-[90vh] transition-all duration-300`}
             >
               <div className="absolute top-0 right-0 w-32 h-32 bg-orange-500/5 rounded-full filter blur-xl translate-x-12 -translate-y-12" />
               
-              <div className="relative flex justify-between items-start pb-4 border-b border-neutral-100 select-none mb-5">
-                <div>
-                  <span className="text-[9px] font-black uppercase text-orange-600 tracking-widest block mb-0.5">Database Normalization Suite</span>
-                  <h3 className="text-base md:text-lg font-black text-neutral-900 font-sans tracking-tight leading-none">ZERO2ONE Academic Master Control</h3>
+              {/* Header and Tab Control */}
+              <div className="relative flex flex-col gap-4 pb-4 border-b border-neutral-105 select-none mb-5">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <span className="text-[10px] font-black uppercase text-orange-600 tracking-widest block mb-0.5">Academic Master Control</span>
+                    <h3 className="text-base md:text-lg font-black text-neutral-900 font-sans tracking-tight leading-none">ZERO2ONE Admin Console</h3>
+                  </div>
+                  {normStatus !== "running" && !notifSaving && (
+                    <button 
+                      onClick={() => setIsNormPanelOpen(false)}
+                      className="p-1.5 rounded-full hover:bg-neutral-100 text-neutral-400 hover:text-neutral-900 transition-colors cursor-pointer"
+                    >
+                      <Minimize2 size={16} />
+                    </button>
+                  )}
                 </div>
-                {normStatus !== "running" && (
-                  <button 
-                    onClick={() => setIsNormPanelOpen(false)}
-                    className="p-1.5 rounded-full hover:bg-neutral-100 text-neutral-400 hover:text-neutral-900 transition-colors cursor-pointer"
+
+                <div className="flex gap-4">
+                  <button
+                    type="button"
+                    onClick={() => setActiveAdminTab("norm")}
+                    className={`pb-1 text-xs font-black uppercase tracking-wider transition-all border-b-2 cursor-pointer ${activeAdminTab === "norm" ? "border-orange-500 text-orange-600" : "border-transparent text-neutral-400 hover:text-neutral-600"}`}
                   >
-                    <Minimize2 size={16} />
+                    Database Sync
                   </button>
-                )}
+                  <button
+                    type="button"
+                    onClick={() => setActiveAdminTab("notifications")}
+                    className={`pb-1 text-xs font-black uppercase tracking-wider transition-all border-b-2 cursor-pointer ${activeAdminTab === "notifications" ? "border-orange-500 text-orange-600" : "border-transparent text-neutral-400 hover:text-neutral-600"}`}
+                  >
+                    Announcements Hub
+                  </button>
+                </div>
               </div>
 
-              <div className="space-y-4 overflow-y-auto flex-1 pr-1.5 scrollbar-thin">
-                <p className="text-xs text-neutral-500 leading-relaxed">
-                  Analyze, deduplicate and transition your course syllabus subjects and uploaded resource files into a centralized data model. Duplicate subject code nodes will be cataloged and mapped under a singular core document.
-                </p>
+              {activeAdminTab === "norm" ? (
+                <>
+                  <div className="space-y-4 overflow-y-auto flex-1 pr-1.5 scrollbar-thin">
+                    <p className="text-xs text-neutral-500 leading-relaxed">
+                      Analyze, deduplicate and transition your course syllabus subjects and uploaded resource files into a centralized data model. Duplicate subject code nodes will be cataloged and mapped under a singular core document.
+                    </p>
 
-                {/* Log Output Console board */}
-                <div className="space-y-1.5">
-                  <span className="text-[9px] font-black uppercase tracking-widest text-neutral-400 block font-sans">Execution Output Log</span>
-                  <div className="bg-neutral-950 font-mono text-emerald-400 text-[10px] md:text-xs p-4 rounded-2xl max-h-48 overflow-y-auto mb-1 border border-neutral-800 space-y-1 shadow-inner">
-                    {normLogs.length === 0 ? (
-                      <span className="text-neutral-500 italic">// Console Idle. State mapping loaded. Ready to run...</span>
-                    ) : (
-                      normLogs.map((log, index) => (
-                        <div key={index} className="leading-relaxed animate-fadeIn">
-                          <span className="text-neutral-600 mr-2 font-bold select-none">&gt;&gt;</span>
-                          {log}
-                        </div>
-                      ))
+                    {/* Log Output Console board */}
+                    <div className="space-y-1.5">
+                      <span className="text-[9px] font-black uppercase tracking-widest text-neutral-400 block font-sans">Execution Output Log</span>
+                      <div className="bg-neutral-950 font-mono text-emerald-400 text-[10px] md:text-xs p-4 rounded-2xl max-h-48 overflow-y-auto mb-1 border border-neutral-800 space-y-1 shadow-inner">
+                        {normLogs.length === 0 ? (
+                          <span className="text-neutral-500 italic">// Console Idle. State mapping loaded. Ready to run...</span>
+                        ) : (
+                          normLogs.map((log, index) => (
+                            <div key={index} className="leading-relaxed animate-fadeIn">
+                              <span className="text-neutral-600 mr-2 font-bold select-none">&gt;&gt;</span>
+                              {log}
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+
+                    {normStatus === "success" && (
+                      <div className="p-3 bg-emerald-50 text-emerald-700 border border-emerald-150 rounded-xl text-xs font-bold leading-normal">
+                        ✓ Success: Master database normalization complete! Over 100 duplicate relationships resolved correctly offline.
+                      </div>
+                    )}
+
+                    {normStatus === "error" && (
+                      <div className="p-3 bg-red-50 text-red-600 border border-red-150 rounded-xl text-xs font-bold leading-normal">
+                        ⚠️ Error encountered. Check the log statements in the console panel above.
+                      </div>
                     )}
                   </div>
+
+                  <div className="pt-4 border-t border-neutral-100 flex flex-wrap gap-2.5 justify-end items-center">
+                    <button 
+                      type="button"
+                      disabled={normStatus === "running"}
+                      onClick={() => {
+                        setSubjectFormCode("");
+                        setSubjectFormName("");
+                        setSubjectFormSem(1);
+                        setSubjectFormDepts([]);
+                        setEditingSubject(null);
+                        setSubjectFormError("");
+                        setIsSubjectModalOpen(true);
+                      }}
+                      className="px-4 py-2 rounded-xl border border-neutral-200 hover:bg-neutral-50 text-neutral-600 hover:text-neutral-900 text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
+                    >
+                      <Layers size={12} /> + Custom Subject
+                    </button>
+
+                    {normStatus !== "running" ? (
+                      <button 
+                        type="button"
+                        onClick={runDatabaseNormalization}
+                        className="px-5 py-2.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-black text-xs transition-all cursor-pointer shadow-md flex items-center gap-1.5"
+                      >
+                        <Sparkles size={13} />
+                        Run Normalization Suite
+                      </button>
+                    ) : (
+                      <button 
+                        type="button"
+                        disabled
+                        className="px-5 py-2.5 rounded-xl bg-neutral-200 text-neutral-400 font-bold text-xs transition-all flex items-center gap-1.5"
+                      >
+                        <Sparkles size={13} className="animate-spin" />
+                        Running Migration...
+                      </button>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="space-y-6 flex-1 overflow-y-auto pr-1">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+                    
+                    {/* Left Column: Form to create notification */}
+                    <div className="space-y-4">
+                      <h4 className="text-[10px] font-black uppercase tracking-widest text-orange-600">🚀 Publish Announcement</h4>
+                      
+                      {notifError && (
+                        <div className="p-3 bg-red-50 text-red-600 border border-red-100 rounded-xl text-xs font-bold leading-normal">
+                          ⚠️ {notifError}
+                        </div>
+                      )}
+
+                      <form onSubmit={handlePublishNotification} className="space-y-3 font-sans">
+                        {/* Title */}
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black uppercase text-neutral-400 select-none">Title *</label>
+                          <input
+                            type="text"
+                            value={notifTitle}
+                            onChange={(e) => setNotifTitle(e.target.value)}
+                            placeholder="e.g. 📚 PYQs (2019-2025) Uploaded"
+                            required
+                            className="w-full px-4 py-2.5 rounded-xl border border-neutral-200 text-neutral-900 text-xs focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 outline-none"
+                          />
+                        </div>
+
+                        {/* Description */}
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black uppercase text-neutral-400 select-none">Description *</label>
+                          <textarea
+                            value={notifDescription}
+                            onChange={(e) => setNotifDescription(e.target.value)}
+                            placeholder="Engineering Physics PYQs are now available in Drive backup..."
+                            required
+                            rows={3}
+                            className="w-full px-4 py-2.5 rounded-xl border border-neutral-200 text-neutral-900 text-xs focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 outline-none resize-none"
+                          />
+                        </div>
+
+                        {/* Type selection */}
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black uppercase text-neutral-400 select-none">Type</label>
+                          <select
+                            value={notifType}
+                            onChange={(e) => setNotifType(e.target.value as any)}
+                            className="w-full px-4 py-2.5 rounded-xl border border-neutral-200 text-neutral-900 text-xs focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 outline-none"
+                          >
+                            <option value="text">Plain Text Notification</option>
+                            <option value="image">Image Banner Notification</option>
+                            <option value="link">Anchor Link Notification</option>
+                          </select>
+                        </div>
+
+                        {/* Image file selector */}
+                        {notifType === "image" && (
+                          <div className="space-y-2 animate-fadeIn text-left">
+                            <div className="flex justify-between items-center">
+                              <label className="text-[9px] font-black uppercase text-neutral-400 select-none">Image Source</label>
+                              <div className="flex gap-1.5 bg-neutral-100/80 p-0.5 rounded-lg border border-neutral-200/50">
+                                <button
+                                  type="button"
+                                  onClick={() => setNotifImageSource("upload")}
+                                  className={`px-2 py-0.5 rounded-md text-[9px] font-bold cursor-pointer transition-all ${notifImageSource === "upload" ? "bg-white text-orange-600 shadow-sm" : "text-neutral-500 hover:text-neutral-900"}`}
+                                >
+                                  Upload File
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setNotifImageSource("url")}
+                                  className={`px-2 py-0.5 rounded-md text-[9px] font-bold cursor-pointer transition-all ${notifImageSource === "url" ? "bg-white text-orange-600 shadow-sm" : "text-neutral-500 hover:text-neutral-900"}`}
+                                >
+                                  Direct URL
+                                </button>
+                              </div>
+                            </div>
+
+                            {notifImageSource === "upload" ? (
+                              <div className="relative border border-solid border-neutral-200 rounded-xl p-3 text-center bg-neutral-50/50 hover:bg-neutral-50 hover:border-orange-500/60 transition-colors cursor-pointer select-none">
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  required={notifImageSource === "upload" && !notifFile}
+                                  onChange={(e) => setNotifFile(e.target.files ? e.target.files[0] : null)}
+                                  className="absolute inset-0 opacity-0 cursor-pointer"
+                                />
+                                <div className="text-neutral-400 text-[10px]">
+                                  {notifFile ? (
+                                    <span className="text-orange-600 font-bold">✓ {notifFile.name} (Ready)</span>
+                                  ) : (
+                                    <span>Drag & Drop or Click to Select File</span>
+                                  )}
+                                </div>
+                              </div>
+                            ) : (
+                              <input
+                                type="url"
+                                value={notifImageUrl}
+                                onChange={(e) => setNotifImageUrl(e.target.value)}
+                                placeholder="Paste direct image link (e.g. https://imgur.com/...png)"
+                                required={notifImageSource === "url"}
+                                className="w-full px-4 py-2.5 rounded-xl border border-neutral-200 text-neutral-900 text-xs focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 outline-none"
+                              />
+                            )}
+                          </div>
+                        )}
+
+                        {/* Button Link settings */}
+                        <div className="grid grid-cols-2 gap-2 pt-1">
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-black uppercase text-neutral-400 select-none">Button Text</label>
+                            <input
+                              type="text"
+                              value={notifButtonText}
+                              onChange={(e) => setNotifButtonText(e.target.value)}
+                              placeholder="e.g. Open Notes"
+                              className="w-full px-3 py-2 rounded-xl border border-neutral-200 text-neutral-900 text-xs focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 outline-none"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-black uppercase text-neutral-400 select-none">Button URL</label>
+                            <input
+                              type="url"
+                              value={notifButtonUrl}
+                              onChange={(e) => setNotifButtonUrl(e.target.value)}
+                              placeholder="https://drive.google.com/..."
+                              className="w-full px-3 py-2 rounded-xl border border-neutral-200 text-neutral-900 text-xs focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 outline-none"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Priority and Expiry settings */}
+                        <div className="grid grid-cols-2 gap-2 pt-1">
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-black uppercase text-neutral-400 select-none">Priority</label>
+                            <select
+                              value={notifPriority}
+                              onChange={(e) => setNotifPriority(e.target.value as any)}
+                              className="w-full px-3 py-2 rounded-xl border border-neutral-200 text-neutral-900 text-xs focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 outline-none"
+                            >
+                              <option value="low">Low Priority</option>
+                              <option value="medium">Medium Priority</option>
+                              <option value="high">High Priority</option>
+                            </select>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-black uppercase text-neutral-400 select-none">Expiry Date</label>
+                            <input
+                              type="date"
+                              value={notifExpiresAt}
+                              onChange={(e) => setNotifExpiresAt(e.target.value)}
+                              className="w-full px-3 py-2 rounded-xl border border-neutral-200 text-neutral-900 text-xs focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 outline-none"
+                            />
+                          </div>
+                        </div>
+
+                        {notifSaving && uploadProgress !== null && (
+                          <div className="space-y-1.5 pt-2">
+                            <div className="flex justify-between items-center text-[10px] text-neutral-500 font-bold">
+                              <span>Image Upload Progress</span>
+                              <span>{uploadProgress}%</span>
+                            </div>
+                            <div className="w-full h-2 bg-neutral-150 rounded-full overflow-hidden">
+                              <div 
+                                className="h-full bg-orange-500 transition-all duration-300" 
+                                style={{ width: `${uploadProgress}%` }}
+                              />
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="pt-3">
+                          <button
+                            type="submit"
+                            disabled={notifSaving}
+                            className="w-full px-4 py-2.5 rounded-xl bg-orange-500 hover:bg-orange-600 font-extrabold text-xs uppercase tracking-wider text-white transition-all shadow-md active:scale-[0.98] cursor-pointer flex items-center justify-center gap-1.5"
+                          >
+                            {notifSaving ? (
+                              <>
+                                <Sparkles size={12} className="animate-spin" /> {uploadProgress !== null && uploadProgress > 0 ? `Uploading ${uploadProgress}%...` : "Publishing..."}
+                              </>
+                            ) : "Publish Announcement"}
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+
+                    {/* Right Column: Existing Announcements list */}
+                    <div className="space-y-4 font-sans text-left">
+                      <h4 className="text-[10px] font-black uppercase tracking-widest text-neutral-900">📊 Published Alerts ({notifications.length})</h4>
+                      
+                      <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
+                        {notifications.length === 0 ? (
+                          <div className="text-center p-6 border border-dashed border-neutral-250 rounded-2xl text-[10px] md:text-xs text-neutral-400 select-none">
+                            No announcements active in database.
+                          </div>
+                        ) : (
+                          notifications
+                            .sort((a, b) => {
+                              const tA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
+                              const tB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
+                              return tB - tA;
+                            })
+                            .map((notif) => (
+                              <div key={notif.id} className="p-3 border border-neutral-100 rounded-2xl bg-neutral-50/70 hover:bg-neutral-50 transition-colors flex flex-col gap-1.5 relative select-none">
+                                <div className="flex justify-between items-start">
+                                  <div className="space-y-0.5">
+                                    <h5 className="font-extrabold text-neutral-900 text-xs leading-none line-clamp-1">{notif.title}</h5>
+                                    <div className="flex gap-2 items-center">
+                                      <span className="text-[8px] font-mono text-neutral-400">ID: {notif.id.substring(0, 6)}</span>
+                                      <span className={`text-[8px] font-black px-1.5 py-0.5 rounded-full ${notif.active ? "bg-emerald-50 text-emerald-600 border border-emerald-100" : "bg-neutral-100 text-neutral-500 border border-neutral-200"}`}>
+                                        {notif.active ? "ACTIVE" : "MUTED"}
+                                      </span>
+                                    </div>
+                                  </div>
+                                  
+                                  <div className="flex gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleToggleActiveNotification(notif.id, notif.active)}
+                                      className={`px-1.5 py-0.5 rounded font-black text-[8px] cursor-pointer border ${notif.active ? "bg-amber-50 text-amber-600 border-amber-100 hover:bg-amber-100" : "bg-emerald-50 text-emerald-600 border border-emerald-100 hover:bg-emerald-100"}`}
+                                    >
+                                      {notif.active ? "Mute" : "Unmute"}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteNotification(notif.id)}
+                                      className="p-0.5 rounded bg-red-50 hover:bg-red-100 text-red-500 border border-red-100 cursor-pointer"
+                                    >
+                                      <Trash2 size={11} />
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            ))
+                        )}
+                      </div>
+                    </div>
+
+                  </div>
                 </div>
-
-                {normStatus === "success" && (
-                  <div className="p-3 bg-emerald-50 text-emerald-700 border border-emerald-150 rounded-xl text-xs font-bold leading-normal">
-                    ✓ Success: Master database normalization complete! Over 100 duplicate relationships resolved correctly offline.
-                  </div>
-                )}
-
-                {normStatus === "error" && (
-                  <div className="p-3 bg-red-50 text-red-600 border border-red-150 rounded-xl text-xs font-bold leading-normal">
-                    ⚠️ Error encountered. Check the log statements in the console panel above.
-                  </div>
-                )}
-              </div>
-
-              <div className="pt-4 border-t border-neutral-100 flex flex-wrap gap-2.5 justify-end items-center">
-                <button 
-                  type="button"
-                  disabled={normStatus === "running"}
-                  onClick={() => {
-                    setSubjectFormCode("");
-                    setSubjectFormName("");
-                    setSubjectFormSem(1);
-                    setSubjectFormDepts([]);
-                    setEditingSubject(null);
-                    setSubjectFormError("");
-                    setIsSubjectModalOpen(true);
-                  }}
-                  className="px-4 py-2 rounded-xl border border-neutral-200 hover:bg-neutral-50 text-neutral-600 hover:text-neutral-900 text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
-                >
-                  <Layers size={12} /> + Custom Subject
-                </button>
-
-                {normStatus !== "running" ? (
-                  <button 
-                    type="button"
-                    onClick={runDatabaseNormalization}
-                    className="px-5 py-2.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-black text-xs transition-all cursor-pointer shadow-md flex items-center gap-1.5"
-                  >
-                    <Sparkles size={13} />
-                    Run Normalization Suite
-                  </button>
-                ) : (
-                  <button 
-                    type="button"
-                    disabled
-                    className="px-5 py-2.5 rounded-xl bg-neutral-200 text-neutral-400 font-bold text-xs transition-all flex items-center gap-1.5"
-                  >
-                    <Sparkles size={13} className="animate-spin" />
-                    Running Migration...
-                  </button>
-                )}
-              </div>
+              )}
             </motion.div>
           </div>
         )}

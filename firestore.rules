@@ -80,6 +80,21 @@ service cloud.firestore {
              (!('department_visibility' in res) || res.department_visibility is list);
     }
 
+    function isValidNotification(notif) {
+      return notif.keys().hasAll(['title', 'description', 'type', 'priority', 'active', 'createdAt']) &&
+             notif.keys().size() >= 6 && notif.keys().size() <= 10 &&
+             notif.title is string && notif.title.size() <= 300 &&
+             notif.description is string && notif.description.size() <= 2000 &&
+             notif.type is string && notif.type in ['text', 'image', 'link'] &&
+             notif.priority is string && notif.priority in ['high', 'medium', 'low'] &&
+             notif.active is bool &&
+             notif.createdAt == request.time &&
+             (!('imageUrl' in notif) || notif.imageUrl is string) &&
+             (!('buttonText' in notif) || notif.buttonText is string) &&
+             (!('buttonUrl' in notif) || notif.buttonUrl is string) &&
+             (!('expiresAt' in notif) || notif.expiresAt is timestamp);
+    }
+
     // Collection Rules
     match /admins/{uid} {
       allow get: if isSignedIn() && (request.auth.uid == uid || isAdmin());
@@ -98,6 +113,13 @@ service cloud.firestore {
       allow read, list: if true; // Public access to resources
       allow create: if isAdmin() && isValidResource(incoming());
       allow update: if isAdmin() && isValidResource(incoming()) && incoming().uploadedBy == existing().uploadedBy;
+      allow delete: if isAdmin();
+    }
+
+    match /notifications/{notificationId} {
+      allow read, list: if true; // Public access to notifications
+      allow create: if isAdmin() && isValidNotification(incoming());
+      allow update: if isAdmin() && isValidNotification(incoming()) && incoming().createdAt == existing().createdAt;
       allow delete: if isAdmin();
     }
   }

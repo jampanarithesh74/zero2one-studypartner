@@ -46,6 +46,24 @@
         "semester": { "type": "number" }
       },
       "required": ["subjectCode", "type", "title", "uploadedAt", "uploadedBy"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "Global announcement displayed prominently to users",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "type": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "buttonText": { "type": "string" },
+        "buttonUrl": { "type": "string" },
+        "priority": { "type": "string" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "expiresAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "description", "type", "priority", "active", "createdAt"]
     }
   },
   "firestore": {
@@ -60,6 +78,10 @@
     "resources/{resourceId}": {
       "schema": "Resource",
       "description": "Centralized resources collection mapped by subjectCode"
+    },
+    "notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "Global platforms updates and admin-published notifications"
     }
   }
 }
