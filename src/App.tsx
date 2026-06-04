@@ -98,6 +98,12 @@ export default function App() {
   const [notifError, setNotifError] = useState("");
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
 
+  // In-session query cache references and change tracker versions to prevent duplicate database reads
+  const subjectsCacheRef = useRef<Record<string, any[]>>({});
+  const resourcesCacheRef = useRef<Record<string, any[]>>({});
+  const [subjectVersion, setSubjectVersion] = useState<number>(0);
+  const [resourceVersion, setResourceVersion] = useState<number>(0);
+
   // PDF Rotation States & Dimension Tracking
   const [previewRotation, setPreviewRotation] = useState<number>(0);
   const [fullscreenRotation, setFullscreenRotation] = useState<number>(0);
@@ -219,9 +225,11 @@ export default function App() {
 
   // Fetch global announcements in real time
   useEffect(() => {
-    const q = query(
-      collection(db, "notifications")
-    );
+    // If the user is an admin they can see all notifications including muted/inactive ones for management.
+    // If they are a normal user, we restrict the Firestore query to active == true.
+    const q = isAdmin 
+      ? query(collection(db, "notifications"))
+      : query(collection(db, "notifications"), where("active", "==", true));
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const list = snapshot.docs.map(doc => {
@@ -237,7 +245,7 @@ export default function App() {
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [isAdmin]);
 
   const activeNotifications = notifications.filter(notif => {
     // 0. Filter out inactive ones for regular users
@@ -396,54 +404,98 @@ export default function App() {
     }
   };
 
-  // Fetch dynamic subjects from Firestore
+  // Fetch dynamic subjects from Firestore with in-session caching and semester-level query filtering
   useEffect(() => {
+    let isMounted = true;
     if (selectedDept && selectedSem) {
-      const q = query(
-        collection(db, "subjects"),
-        where("linked_departments", "array-contains", selectedDept)
-      );
+      const cacheKey = `${selectedDept}_${selectedSem}`;
 
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() as any }));
-        // Elegant client-side semester filtering to handle semester shifting without Firestore composite indexes
-        const filteredList = list.filter(sub => {
-          if (sub.semester_mapping && typeof sub.semester_mapping === "object" && sub.semester_mapping[selectedDept] !== undefined) {
-            return sub.semester_mapping[selectedDept] === selectedSem;
+      // Bypasses cache for admin role so they always manage real data
+      if (subjectsCacheRef.current[cacheKey] && !isAdmin) {
+        setDynamicSubjects(subjectsCacheRef.current[cacheKey]);
+        return;
+      }
+
+      const fetchSubjects = async () => {
+        try {
+          const q = query(
+            collection(db, "subjects"),
+            where("linked_departments", "array-contains", selectedDept),
+            where("semester", "==", selectedSem)
+          );
+          const snapshot = await getDocs(q);
+          const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() as any }));
+          
+          // Re-apply client-side semester filtering to handle semester shifting smoothly
+          const filteredList = list.filter(sub => {
+            if (sub.semester_mapping && typeof sub.semester_mapping === "object" && sub.semester_mapping[selectedDept] !== undefined) {
+              return sub.semester_mapping[selectedDept] === selectedSem;
+            }
+            return sub.semester === selectedSem;
+          });
+
+          if (isMounted) {
+            subjectsCacheRef.current[cacheKey] = filteredList;
+            setDynamicSubjects(filteredList);
           }
-          return sub.semester === selectedSem;
-        });
-        setDynamicSubjects(filteredList);
-      }, (error) => {
-        handleFirestoreError(error, OperationType.LIST, "subjects");
-      });
+        } catch (error: any) {
+          console.error("Error fetching subjects:", error);
+          if (isMounted) {
+            handleFirestoreError(error, OperationType.LIST, "subjects");
+          }
+        }
+      };
 
-      return () => unsubscribe();
+      fetchSubjects();
     } else {
       setDynamicSubjects([]);
     }
-  }, [selectedDept, selectedSem]);
 
-  // Fetch resources based on active subject selection in real time
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedDept, selectedSem, isAdmin, subjectVersion]);
+
+  // Fetch resources based on active subject selection with in-session caching
   useEffect(() => {
+    let isMounted = true;
     if (viewState === "resources-view" && activeSubject) {
-      const q = query(
-        collection(db, "resources"),
-        where("subjectCode", "==", activeSubject)
-      );
+      
+      if (resourcesCacheRef.current[activeSubject] && !isAdmin) {
+        setUploadedResources(resourcesCacheRef.current[activeSubject]);
+        return;
+      }
 
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        const resources = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        setUploadedResources(resources);
-      }, (error) => {
-        handleFirestoreError(error, OperationType.LIST, "resources");
-      });
+      const fetchResources = async () => {
+        try {
+          const q = query(
+            collection(db, "resources"),
+            where("subjectCode", "==", activeSubject)
+          );
+          const snapshot = await getDocs(q);
+          const resources = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-      return () => unsubscribe();
+          if (isMounted) {
+            resourcesCacheRef.current[activeSubject] = resources;
+            setUploadedResources(resources);
+          }
+        } catch (error: any) {
+          console.error("Error fetching resources:", error);
+          if (isMounted) {
+            handleFirestoreError(error, OperationType.LIST, "resources");
+          }
+        }
+      };
+
+      fetchResources();
     } else if (!activeSubject) {
       setUploadedResources([]);
     }
-  }, [viewState, activeSubject]);
+
+    return () => {
+      isMounted = false;
+    };
+  }, [viewState, activeSubject, isAdmin, resourceVersion]);
 
   const getMergedSubjects = () => {
     const staticList = SYLLABUS_MAP[selectedDept || ""]?.[selectedSem || 1] || [];
@@ -648,6 +700,8 @@ export default function App() {
       }
 
       // Reset configurations and collapse admin drawer modal
+      resourcesCacheRef.current = {};
+      setResourceVersion(prev => prev + 1);
       setIsAdminModalOpen(false);
       setFormTitle("");
       setFormDriveLink("");
@@ -816,6 +870,10 @@ export default function App() {
       setNormLogs(prev => [...prev, `Successfully updated relational links for ${resourcesMigrated} resources.`]);
       setNormLogs(prev => [...prev, "🎉 Database Normalization complete! Subject-centric framework successfully activated."]);
       setNormStatus("success");
+      subjectsCacheRef.current = {};
+      resourcesCacheRef.current = {};
+      setSubjectVersion(prev => prev + 1);
+      setResourceVersion(prev => prev + 1);
     } catch (error: any) {
       console.error(error);
       setNormLogs(prev => [...prev, `❌ Error during normalization: ${error.message || error}`]);
@@ -861,6 +919,8 @@ export default function App() {
       }, { merge: true });
       
       alert(`Subject ${upperCode} saved successfully!`);
+      subjectsCacheRef.current = {};
+      setSubjectVersion(prev => prev + 1);
       setIsSubjectModalOpen(false);
       setSubjectFormCode("");
       setSubjectFormName("");
@@ -1604,7 +1664,13 @@ export default function App() {
                                         <button 
                                           onClick={async () => {
                                             if(confirm("Are you sure you want to delete this resource?")) {
-                                              await deleteDoc(doc(db, "resources", activeNote.id));
+                                              try {
+                                                await deleteDoc(doc(db, "resources", activeNote.id));
+                                                resourcesCacheRef.current = {};
+                                                setResourceVersion(prev => prev + 1);
+                                              } catch (err: any) {
+                                                alert("Delete error: " + err.message);
+                                              }
                                             }
                                           }}
                                           className="p-1.5 rounded-lg bg-white text-red-500 shadow-sm border border-neutral-100 transition-all hover:bg-red-50 cursor-pointer"
@@ -1802,7 +1868,13 @@ export default function App() {
                               <button 
                                 onClick={async () => {
                                   if(confirm("Delete this PYQ?")) {
-                                    await deleteDoc(doc(db, "resources", res.id));
+                                    try {
+                                      await deleteDoc(doc(db, "resources", res.id));
+                                      resourcesCacheRef.current = {};
+                                      setResourceVersion(prev => prev + 1);
+                                    } catch (err: any) {
+                                      alert("Delete error: " + err.message);
+                                    }
                                   }
                                 }}
                                 className="p-1.5 rounded-lg bg-neutral-50 hover:bg-neutral-100 text-red-500 shadow-inner cursor-pointer"
