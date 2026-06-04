@@ -6,6 +6,7 @@
 import { motion, AnimatePresence } from "motion/react";
 import { ChevronRight, Sparkles, ArrowLeft, BookOpen, Clock, Award, FileText, Download, Layers, Shield, LogIn, LogOut, Plus, Trash2, Maximize2, Minimize2, Instagram, ArrowUpRight, Edit2, ExternalLink, RotateCcw, RotateCw, X } from "lucide-react";
 import { useState, useEffect, FormEvent, useRef } from "react";
+import { useLocation, useNavigate, matchPath } from "react-router-dom";
 import { DEPARTMENTS, SYLLABUS_MAP, SUBJECT_DETAILS } from "./data/syllabus";
 import { auth, db, googleProvider, ALLOWED_ADMIN_EMAILS, handleFirestoreError, OperationType, storage } from "./lib/firebase";
 import { onAuthStateChanged, signInWithPopup, signOut, User } from "firebase/auth";
@@ -16,11 +17,222 @@ import { PDFViewer } from "./components/PDFViewer";
 type ViewState = "year-selection" | "dept-selection" | "sem-selection" | "choice-selection" | "syllabus-view" | "resources-view";
 
 export default function App() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [isRoute404, setIsRoute404] = useState(false);
+
   const [viewState, setViewState] = useState<ViewState>("year-selection");
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
   const [selectedDept, setSelectedDept] = useState<string | null>(null);
   const [selectedSem, setSelectedSem] = useState<number | null>(null);
   const [activeSubject, setActiveSubject] = useState<string | null>(null);
+  const [dynamicSubjects, setDynamicSubjects] = useState<any[]>([]);
+
+  // Helper: Resolve department case/abbreviation-insensitively
+  const resolveDepartment = (deptUri: string | undefined): string | null => {
+    if (!deptUri) return null;
+    const decoded = decodeURIComponent(deptUri).trim();
+    if (DEPARTMENTS.includes(decoded)) return decoded;
+    const cleanUri = decoded.toLowerCase().replace(/[-_]/g, " ");
+    const found = DEPARTMENTS.find(d => {
+      const cleanD = d.toLowerCase();
+      return cleanD === cleanUri || 
+             cleanD.startsWith(cleanUri) || 
+             cleanUri.startsWith(cleanD) ||
+             (deptUri.toUpperCase() === "CSE" && d === "Computer Science and Engineering") ||
+             (deptUri.toUpperCase() === "IT" && d === "Information Technology") ||
+             (deptUri.toUpperCase() === "AI" && d === "Artificial Intelligence") ||
+             (deptUri.toUpperCase() === "AIML" && d === "AI & Machine Learning") ||
+             (deptUri.toUpperCase() === "EEE" && d === "Electrical & Electronics Engineering") ||
+             (deptUri.toUpperCase() === "ECE" && d === "Electronics & Communication Engineering") ||
+             (deptUri.toUpperCase() === "ME" && d === "Mechanical Engineering") ||
+             (deptUri.toUpperCase() === "CE" && d === "Civil Engineering");
+    });
+    return found || null;
+  };
+
+  // Helper: Look up static or dynamic syllabus subject by customized code
+  const findSubjectByCode = (code: string | undefined) => {
+    if (!code) return null;
+    const upperCode = code.toUpperCase();
+    if (SUBJECT_DETAILS[upperCode]) {
+      return {
+        code: upperCode,
+        title: SUBJECT_DETAILS[upperCode].title,
+        isStatic: true,
+        ...SUBJECT_DETAILS[upperCode]
+      };
+    }
+    for (const dept in SYLLABUS_MAP) {
+      for (const sem in SYLLABUS_MAP[dept]) {
+        const sub = SYLLABUS_MAP[dept][sem].find(s => s.code === upperCode);
+        if (sub) {
+          return {
+            code: upperCode,
+            title: sub.title,
+            isStatic: true,
+            semester: Number(sem),
+            department: dept
+          };
+        }
+      }
+    }
+    const dyn = dynamicSubjects.find(s => s.subjectCode === upperCode || s.code === upperCode || s.id === upperCode);
+    if (dyn) {
+      return {
+        code: upperCode,
+        title: dyn.title,
+        isStatic: false,
+        semester: dyn.semester,
+        department: dyn.linked_departments?.[0] || selectedDept
+      };
+    }
+    return null;
+  };
+
+  // URL State Synchronizer Effect
+  useEffect(() => {
+    const handleUrlSync = () => {
+      const pathname = location.pathname;
+
+      // 1. Matches `/subject/:subjectCode/resources`
+      const matchSubNotes = matchPath("/subject/:subjectCode/resources", pathname);
+      if (matchSubNotes) {
+        setIsRoute404(false);
+        const rawCode = matchSubNotes.params.subjectCode;
+        if (rawCode === "all") {
+          setActiveSubject(null);
+          setExpandedUnit(null);
+          setViewState("resources-view");
+          setResourceTab("notes");
+          return;
+        }
+        const found = findSubjectByCode(rawCode);
+        if (found) {
+          setSelectedDept(found.department || null);
+          setSelectedSem(found.semester || null);
+          setActiveSubject(found.code);
+          setViewState("resources-view");
+          setResourceTab("notes");
+        } else {
+          setActiveSubject(rawCode.toUpperCase());
+          setViewState("resources-view");
+        }
+        return;
+      }
+
+      // 2. Matches `/subject/:subjectCode/pyqs`
+      const matchSubPyqs = matchPath("/subject/:subjectCode/pyqs", pathname);
+      if (matchSubPyqs) {
+        setIsRoute404(false);
+        const rawCode = matchSubPyqs.params.subjectCode;
+        if (rawCode === "all") {
+          setActiveSubject(null);
+          setExpandedUnit(null);
+          setViewState("resources-view");
+          setResourceTab("pyqs");
+          return;
+        }
+        const found = findSubjectByCode(rawCode);
+        if (found) {
+          setSelectedDept(found.department || null);
+          setSelectedSem(found.semester || null);
+          setActiveSubject(found.code);
+          setViewState("resources-view");
+          setResourceTab("pyqs");
+        } else {
+          setActiveSubject(rawCode.toUpperCase());
+          setViewState("resources-view");
+        }
+        return;
+      }
+
+      // 3. Matches `/subject/:subjectCode`
+      const matchSubSyllabus = matchPath("/subject/:subjectCode", pathname);
+      if (matchSubSyllabus) {
+        setIsRoute404(false);
+        const rawCode = matchSubSyllabus.params.subjectCode;
+        const found = findSubjectByCode(rawCode);
+        if (found) {
+          setSelectedDept(found.department || null);
+          setSelectedSem(found.semester || null);
+          setActiveSubject(found.code);
+          setViewState("syllabus-view");
+        } else {
+          setActiveSubject(rawCode.toUpperCase());
+          setViewState("syllabus-view");
+        }
+        return;
+      }
+
+      // 4. Matches `/semester/:dept/:sem`
+      const matchSemester = matchPath("/semester/:dept/:sem", pathname);
+      if (matchSemester) {
+        setIsRoute404(false);
+        const resolvedDept = resolveDepartment(matchSemester.params.dept);
+        const semNum = Number(matchSemester.params.sem);
+        if (resolvedDept && (semNum === 1 || semNum === 2)) {
+          setSelectedDept(resolvedDept);
+          setSelectedSem(semNum);
+          setActiveSubject(null);
+          setExpandedUnit(null);
+          setViewState("choice-selection");
+        } else {
+          navigate(`/department/${matchSemester.params.dept || "select"}`, { replace: true });
+        }
+        return;
+      }
+
+      // 5. Matches `/department/:dept`
+      const matchDept = matchPath("/department/:dept", pathname);
+      if (matchDept) {
+        setIsRoute404(false);
+        const dParam = matchDept.params.dept;
+        if (dParam === "select" || dParam === "all") {
+          setViewState("dept-selection");
+          return;
+        }
+        const resolvedDept = resolveDepartment(dParam);
+        if (resolvedDept) {
+          setSelectedDept(resolvedDept);
+          setSelectedSem(null);
+          setActiveSubject(null);
+          setExpandedUnit(null);
+          setViewState("sem-selection");
+        } else {
+          setViewState("dept-selection");
+        }
+        return;
+      }
+
+      // 6. Matches `/year/:year`
+      const matchYear = matchPath("/year/:year", pathname);
+      if (matchYear) {
+        setIsRoute404(false);
+        const yr = Number(matchYear.params.year);
+        if (yr >= 1 && yr <= 4) {
+          setSelectedYear(yr);
+          setViewState("year-selection");
+        } else {
+          navigate("/", { replace: true });
+        }
+        return;
+      }
+
+      // 7. Matches `/`
+      const matchRoot = matchPath("/", pathname);
+      if (matchRoot) {
+        setIsRoute404(false);
+        setViewState("year-selection");
+        return;
+      }
+
+      // 8. Error fallback
+      setIsRoute404(true);
+    };
+
+    handleUrlSync();
+  }, [location.pathname, dynamicSubjects, selectedDept]);
   const [resourceTab, setResourceTab] = useState<"notes" | "pyqs">("notes");
   const [expandedUnit, setExpandedUnit] = useState<number | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -34,7 +246,6 @@ export default function App() {
 
   // Firestore Data State
   const [uploadedResources, setUploadedResources] = useState<any[]>([]);
-  const [dynamicSubjects, setDynamicSubjects] = useState<any[]>([]);
   
   // Normalization Panel Hub States
   const [isNormPanelOpen, setIsNormPanelOpen] = useState(false);
@@ -938,7 +1149,7 @@ export default function App() {
   const handleLogout = async () => {
     try {
       await signOut(auth);
-      setViewState("year-selection");
+      navigate("/");
     } catch (error) {
       console.error("Logout failed:", error);
     }
@@ -952,12 +1163,12 @@ export default function App() {
   ];
 
   const handleYearSelect = (id: number) => {
-    setSelectedYear(id);
+    navigate(`/year/${id}`);
   };
 
   const handleContinue = () => {
     if (selectedYear === 1) {
-      setViewState("dept-selection");
+      navigate("/department/select");
     }
   };
 
@@ -1074,7 +1285,7 @@ export default function App() {
         <motion.button 
           whileHover={{ x: -2 }}
           whileTap={{ scale: 0.98 }}
-          onClick={() => setViewState("year-selection")} 
+          onClick={() => navigate("/")} 
           className="flex items-center gap-2 text-neutral-400 hover:text-[#0a0a0a] transition-all font-bold uppercase tracking-wider text-[10px] md:text-xs"
         >
           <ArrowLeft size={14} className="md:w-4 md:h-4" /> Back to Year Selection
@@ -1092,7 +1303,7 @@ export default function App() {
               initial={{ opacity: 0, scale: 0.97, y: 15 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               transition={{ delay: index * 0.04 }}
-              onClick={() => { setSelectedDept(dept); setViewState("sem-selection"); }}
+              onClick={() => navigate(`/department/${encodeURIComponent(dept)}`)}
               whileHover={{ scale: 1.01, x: 2 }}
               whileTap={{ scale: 0.98 }}
               className="flex items-center justify-between p-4 md:p-6 lg:p-8 rounded-2xl md:rounded-[2rem] bg-neutral-50/75 border border-neutral-100 hover:border-orange-500/30 hover:bg-orange-50/15 transition-all text-left shadow-sm hover:shadow-md hover:shadow-orange-500/5 group"
@@ -1117,7 +1328,7 @@ export default function App() {
           <motion.button 
             whileHover={{ x: -2 }}
             whileTap={{ scale: 0.98 }}
-            onClick={() => setViewState("dept-selection")} 
+            onClick={() => navigate("/department/select")} 
             className="flex items-center gap-2 text-neutral-400 hover:text-white transition-all font-bold uppercase tracking-wider text-[10px] md:text-xs"
           >
             <ArrowLeft size={14} className="md:w-4 md:h-4" /> Back to Departments
@@ -1142,7 +1353,7 @@ export default function App() {
           {[1, 2].map((sem) => (
             <motion.button
               key={sem}
-              onClick={() => { setSelectedSem(sem); setViewState("choice-selection"); }}
+              onClick={() => navigate(`/semester/${encodeURIComponent(selectedDept || "")}/${sem}`)}
               whileHover={{ scale: 1.015, y: -2 }}
               whileTap={{ scale: 0.985 }}
               className="group relative flex flex-col justify-between p-5 md:p-8 rounded-[28px] bg-neutral-900/60 border border-neutral-800/80 backdrop-blur-sm shadow-xl hover:border-orange-500/50 hover:shadow-[0_0_25px_rgba(249,115,22,0.12)] transition-all duration-300 text-left w-full cursor-pointer overflow-hidden min-h-[140px] md:min-h-[160px]"
@@ -1222,7 +1433,7 @@ export default function App() {
           <motion.button 
             whileHover={{ x: -2 }}
             whileTap={{ scale: 0.98 }}
-            onClick={() => setViewState("sem-selection")} 
+            onClick={() => navigate(`/department/${encodeURIComponent(selectedDept || "")}`)} 
             className="flex items-center gap-2 text-neutral-400 hover:text-black transition-all font-bold uppercase tracking-wider text-[10px] md:text-xs"
           >
             <ArrowLeft size={14} className="md:w-4 md:h-4" /> Back to Semesters
@@ -1248,7 +1459,11 @@ export default function App() {
           <motion.button
             whileHover={{ scale: 1.015, y: -2 }}
             whileTap={{ scale: 0.985 }}
-            onClick={() => setViewState("syllabus-view")}
+            onClick={() => {
+              const subjects = getMergedSubjects();
+              const firstSubCode = subjects.length > 0 ? subjects[0].code : "all";
+              navigate(`/subject/${firstSubCode}`);
+            }}
             className="group relative flex flex-col justify-between p-6 md:p-8 rounded-[28px] bg-white border border-neutral-100 hover:border-orange-500/50 hover:shadow-[0_0_25px_rgba(249,115,22,0.06)] transition-all duration-300 text-left w-full cursor-pointer shadow-sm overflow-hidden"
           >
             <div className="absolute inset-0 bg-gradient-to-r from-orange-500/0 via-orange-500/[0.01]/70 to-orange-500/0 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
@@ -1258,7 +1473,7 @@ export default function App() {
                 <FileText size={20} className="md:w-6 md:h-6" />
               </div>
               <div className="space-y-1">
-                <h3 className="text-lg md:text-xl font-extrabold text-neutral-900 tracking-tight leading-snug">Syllabus Copy</h3>
+                <h3 className="text-lg md:text-xl font-extrabold text-[#0a0a0a] tracking-tight leading-snug">Syllabus Copy</h3>
                 <p className="text-xs md:text-sm text-neutral-400 font-light leading-relaxed">
                   Structure, subjects, and credits for this semester.
                 </p>
@@ -1274,7 +1489,7 @@ export default function App() {
           <motion.button
             whileHover={{ scale: 1.015, y: -2 }}
             whileTap={{ scale: 0.985 }}
-            onClick={() => setViewState("resources-view")}
+            onClick={() => navigate("/subject/all/resources")}
             className="group relative flex flex-col justify-between p-6 md:p-8 rounded-[28px] bg-white border border-neutral-100 hover:border-orange-500/50 hover:shadow-[0_0_25px_rgba(249,115,22,0.06)] transition-all duration-300 text-left w-full cursor-pointer shadow-sm overflow-hidden"
           >
             <div className="absolute inset-0 bg-gradient-to-r from-orange-500/0 via-orange-500/[0.01]/70 to-orange-500/0 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
@@ -1347,7 +1562,7 @@ export default function App() {
             <motion.button 
               whileHover={{ x: -2 }}
               whileTap={{ scale: 0.98 }}
-              onClick={() => { setViewState("choice-selection"); setActiveSubject(null); }} 
+              onClick={() => navigate(`/semester/${encodeURIComponent(selectedDept || "")}/${selectedSem || 1}`)} 
               className="flex items-center gap-2 text-neutral-400 hover:text-black transition-all font-bold uppercase tracking-wider text-[10px] md:text-xs"
             >
               <ArrowLeft size={14} className="md:w-4 md:h-4" /> Back to Choice
@@ -1383,7 +1598,7 @@ export default function App() {
                     initial={{ opacity: 0, y: 15 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: index * 0.05 }}
-                    onClick={() => { setActiveSubject(subject.code); setResourceTab("notes"); }}
+                    onClick={() => navigate(`/subject/${subject.code}/resources`)}
                     whileHover={{ scale: 1.012, y: -1.5 }}
                     whileTap={{ scale: 0.985 }}
                     className="p-4 md:p-5 rounded-[18px] bg-white border border-neutral-105 hover:border-orange-500/40 hover:shadow-[0_0_20px_rgba(249,115,22,0.04)] transition-all duration-300 text-left flex flex-col justify-between h-[155px] md:h-[185px] group relative shadow-sm overflow-hidden animate-fadeIn"
@@ -1423,6 +1638,21 @@ export default function App() {
               </div>
             </div>
           )}
+          {activeSubject && !activeSubjectData && (
+            <div className="h-[350px] rounded-[28px] border-[3px] border-dashed border-red-200 flex flex-col items-center justify-center p-10 text-center space-y-4 bg-white animate-fadeIn">
+              <div className="w-14 h-14 rounded-2xl bg-red-50 flex items-center justify-center text-red-500 shadow-sm"><X size={26} /></div>
+              <div className="space-y-1">
+                <p className="text-sm font-extrabold text-red-500 uppercase tracking-widest">Subject Not Found</p>
+                <p className="text-xs text-neutral-400 max-w-sm">The subject code <span className="font-mono text-red-600 font-semibold bg-red-50 px-1.5 py-0.5 rounded border border-red-100">{activeSubject}</span> was not found in our database.</p>
+              </div>
+              <button 
+                onClick={() => navigate("/subject/all/resources")}
+                className="px-4 py-2 bg-neutral-100 hover:bg-neutral-200 transition-colors text-xs font-bold text-neutral-800 rounded-xl border border-neutral-200 cursor-pointer shadow-sm"
+              >
+                Go Back to All Subjects
+              </button>
+            </div>
+          )}
           {activeSubject && activeSubjectData && (
             <div className="space-y-8 animate-fadeIn">
               
@@ -1432,7 +1662,7 @@ export default function App() {
                   {/* Small inline badge */}
                   <div className="flex items-center gap-2">
                     <button 
-                      onClick={() => { setActiveSubject(null); setExpandedUnit(null); }}
+                      onClick={() => navigate("/subject/all/resources")}
                       className="text-[10px] md:text-xs font-bold text-neutral-400 hover:text-orange-500 transition-colors flex items-center gap-1 font-sans"
                     >
                       <ArrowLeft size={12} /> ALL SUBJECTS
@@ -1450,7 +1680,7 @@ export default function App() {
                 <div className="flex bg-neutral-100 p-1 rounded-2xl border border-neutral-200/40 w-full sm:w-auto self-start shrink-0">
                   <motion.button 
                     whileTap={{ scale: 0.98 }}
-                    onClick={() => { setResourceTab("notes"); setExpandedUnit(null); }}
+                    onClick={() => navigate(`/subject/${activeSubject}/resources`)}
                     className={`flex-1 sm:flex-none px-6 py-2.5 rounded-xl text-xs md:text-sm font-extrabold transition-all duration-300 text-center ${
                       resourceTab === "notes" 
                         ? "bg-white text-orange-600 shadow-sm font-black border border-neutral-100" 
@@ -1461,7 +1691,7 @@ export default function App() {
                   </motion.button>
                   <motion.button 
                     whileTap={{ scale: 0.98 }}
-                    onClick={() => { setResourceTab("pyqs"); setExpandedUnit(null); }}
+                    onClick={() => navigate(`/subject/${activeSubject}/pyqs`)}
                     className={`flex-1 sm:flex-none px-6 py-2.5 rounded-xl text-xs md:text-sm font-extrabold transition-all duration-300 text-center ${
                       resourceTab === "pyqs" 
                         ? "bg-white text-orange-600 shadow-sm font-black border border-neutral-100" 
@@ -2153,7 +2383,7 @@ export default function App() {
             <motion.button 
               whileHover={{ x: -2 }}
               whileTap={{ scale: 0.98 }}
-              onClick={() => { setViewState("choice-selection"); setActiveSubject(null); }} 
+              onClick={() => navigate(`/semester/${encodeURIComponent(selectedDept || "")}/${selectedSem || 1}`)} 
               className="flex items-center gap-2 text-neutral-400 hover:text-black transition-all font-bold uppercase tracking-wider text-[10px] md:text-xs"
             >
               <ArrowLeft size={14} className="md:w-4 md:h-4" /> Back to Choice
@@ -2199,7 +2429,7 @@ export default function App() {
                   return (
                     <motion.button
                       key={subject.code}
-                      onClick={() => setActiveSubject(subject.code)}
+                      onClick={() => navigate(`/subject/${subject.code}`)}
                       whileHover={{ scale: 1.01 }}
                       whileTap={{ scale: 0.99 }}
                       className={`w-full flex items-start justify-between p-4 rounded-2xl border transition-all text-left relative overflow-hidden ${
@@ -2257,7 +2487,7 @@ export default function App() {
                         return (
                           <tr 
                             key={subject.code} 
-                            onClick={() => setActiveSubject(subject.code)} 
+                            onClick={() => navigate(`/subject/${subject.code}`)} 
                             className={`cursor-pointer transition-all ${
                               isSelected 
                                 ? "bg-orange-50/10 text-orange-900 border-l-4 border-l-orange-500" 
@@ -2399,6 +2629,20 @@ export default function App() {
                     </div>
 
                   </motion.div>
+                ) : activeSubject ? (
+                  <div className="h-[350px] rounded-[28px] border-[3px] border-dashed border-red-200 flex flex-col items-center justify-center p-10 text-center space-y-4 bg-white animate-fadeIn">
+                    <div className="w-14 h-14 rounded-2xl bg-red-50 flex items-center justify-center text-red-500 shadow-sm"><X size={26} /></div>
+                    <div className="space-y-1">
+                      <p className="text-sm font-extrabold text-red-500 uppercase tracking-widest">Subject Not Found</p>
+                      <p className="text-xs text-neutral-400 max-w-sm">The subject code <span className="font-mono text-red-600 font-semibold bg-red-50 px-1.5 py-0.5 rounded border border-red-100">{activeSubject}</span> was not found in our database.</p>
+                    </div>
+                    <button 
+                      onClick={() => navigate(`/semester/${encodeURIComponent(selectedDept || "")}/${selectedSem || 1}`)}
+                      className="px-4 py-2 bg-neutral-100 hover:bg-neutral-200 transition-colors text-xs font-bold text-neutral-800 rounded-xl border border-neutral-200 cursor-pointer shadow-sm"
+                    >
+                      Return to Choice Selection
+                    </button>
+                  </div>
                 ) : (
                   <div className="h-[350px] rounded-[28px] border-4 border-dashed border-neutral-100 flex flex-col items-center justify-center p-10 text-center space-y-4 bg-white">
                     <div className="w-14 h-14 rounded-2xl bg-neutral-50 flex items-center justify-center text-neutral-200"><BookOpen size={28} /></div>
@@ -2418,42 +2662,96 @@ export default function App() {
     );
   };
 
+  const render404Page = () => {
+    return (
+      <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col justify-center items-center p-5 md:p-12 text-center overflow-hidden relative">
+        {/* Decorative elements */}
+        <div className="absolute inset-0 z-0 select-none pointer-events-none">
+          <div className="absolute inset-0 opacity-[0.02]" style={{ backgroundImage: 'radial-gradient(circle, white 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
+          <div className="absolute -top-20 -left-20 w-80 h-80 bg-orange-500/10 blur-[120px] rounded-full" />
+          <div className="absolute -bottom-40 -right-20 w-[500px] h-[500px] bg-orange-500/10 blur-[130px] rounded-full" />
+        </div>
+
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="max-w-md w-full space-y-8 z-10"
+        >
+          <div className="space-y-4">
+            <span className="text-[10px] md:text-xs font-mono font-bold tracking-[0.3em] text-orange-500 uppercase">ERROR 404</span>
+            <h1 className="text-5xl md:text-6xl font-black tracking-tighter text-white">LOST IN <span className="text-orange-500">SPACE</span></h1>
+            <p className="text-neutral-400 text-xs md:text-sm font-light leading-relaxed max-w-sm mx-auto">
+              The page you are looking for doesn't exist, was renamed, or has departed to another orbit.
+            </p>
+          </div>
+
+          <div className="pt-4 flex flex-col gap-3">
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => navigate("/")}
+              className="w-full bg-orange-500 text-white font-bold py-4 rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-orange-500/20 hover:bg-orange-600 transition-all cursor-pointer border-none"
+            >
+              <ArrowLeft size={16} /> Return to Home Orbit
+            </motion.button>
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => window.history.back()}
+              className="w-full bg-white/5 border border-white/10 text-neutral-300 hover:text-white font-semibold py-4 rounded-2xl shadow-inner hover:bg-white/10 transition-all cursor-pointer"
+            >
+              Go Back One Step
+            </motion.button>
+          </div>
+        </motion.div>
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-[#fafaf9] text-[#0a0a0a] font-sans selection:bg-orange-100">
       {renderNotificationsList()}
       <AnimatePresence mode="wait">
-        {viewState === "year-selection" && (
-          <motion.div key="year" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            {renderYearSelection()}
+        {isRoute404 ? (
+          <motion.div key="404" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            {render404Page()}
           </motion.div>
-        )}
-        {viewState === "dept-selection" && (
-          <motion.div key="dept" initial={{ opacity: 0, x: 50 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -50 }}>
-            {renderDeptSelection()}
-          </motion.div>
-        )}
-        {viewState === "sem-selection" && (
-          <motion.div key="sem" initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}>
-            {renderSemSelection()}
-          </motion.div>
-        )}
-        {viewState === "choice-selection" && (
-          <motion.div key="choice" initial={{ opacity: 0, y: 50 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-            {renderChoiceSelection()}
-          </motion.div>
-        )}
-        {viewState === "syllabus-view" && (
-          <motion.div key="view" initial={{ opacity: 0, y: 100 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-            {renderSyllabusView()}
-          </motion.div>
-        )}
-        {viewState === "resources-view" && (
-          <motion.div key="resources" initial={{ opacity: 0, y: 50 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-            {renderResourcesView()}
-          </motion.div>
+        ) : (
+          <div key="content" className="w-full">
+            {viewState === "year-selection" && (
+              <motion.div key="year" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                {renderYearSelection()}
+              </motion.div>
+            )}
+            {viewState === "dept-selection" && (
+              <motion.div key="dept" initial={{ opacity: 0, x: 50 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -50 }}>
+                {renderDeptSelection()}
+              </motion.div>
+            )}
+            {viewState === "sem-selection" && (
+              <motion.div key="sem" initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}>
+                {renderSemSelection()}
+              </motion.div>
+            )}
+            {viewState === "choice-selection" && (
+              <motion.div key="choice" initial={{ opacity: 0, y: 50 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+                {renderChoiceSelection()}
+              </motion.div>
+            )}
+            {viewState === "syllabus-view" && (
+              <motion.div key="view" initial={{ opacity: 0, y: 100 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+                {renderSyllabusView()}
+              </motion.div>
+            )}
+            {viewState === "resources-view" && (
+              <motion.div key="resources" initial={{ opacity: 0, y: 50 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+                {renderResourcesView()}
+              </motion.div>
+            )}
+          </div>
         )}
       </AnimatePresence>
-      {viewState !== "sem-selection" && viewState !== "choice-selection" && viewState !== "resources-view" && renderFooter()}
+      {!isRoute404 && viewState !== "sem-selection" && viewState !== "choice-selection" && viewState !== "resources-view" && renderFooter()}
 
       {/* Fullscreen Document Viewer Overlay */}
       <AnimatePresence>
