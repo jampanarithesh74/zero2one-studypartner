@@ -51,14 +51,19 @@ service cloud.firestore {
 
     function isValidSubject(sub) {
       return sub.keys().hasAll(['subjectCode', 'subjectName', 'semester', 'linked_departments']) &&
-             sub.keys().size() >= 4 && sub.keys().size() <= 8 &&
+             sub.keys().size() >= 4 && sub.keys().size() <= 14 &&
              sub.subjectCode is string && sub.subjectCode.size() <= 50 &&
              sub.subjectName is string && sub.subjectName.size() <= 500 &&
              sub.semester is number &&
              sub.linked_departments is list &&
              (!('credits' in sub) || sub.credits is number) &&
              (!('type' in sub) || sub.type is string) &&
+             (!('lecture' in sub) || sub.lecture is number) &&
+             (!('tutorial' in sub) || sub.tutorial is number) &&
+             (!('practical' in sub) || sub.practical is number) &&
+             (!('outcomes' in sub) || sub.outcomes is list) &&
              (!('units' in sub) || sub.units is list) &&
+             (!('semester_mapping' in sub) || sub.semester_mapping is map) &&
              (!('updatedAt' in sub) || sub.updatedAt == request.time);
     }
 
@@ -101,6 +106,17 @@ service cloud.firestore {
       allow create: if isSignedIn() && request.auth.uid == uid && (isBootstrappableAdmin() || isAdmin()) && isValidAdmin(incoming());
       allow update: if isAdmin() && isValidAdmin(incoming()) && incoming().email == existing().email;
       allow delete: if isAdmin();
+    }
+
+    match /users/{uid} {
+      allow read, get: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+      allow create, update: if isSignedIn() && request.auth.uid == uid && incoming().uid == request.auth.uid;
+      allow delete: if isAdmin();
+    }
+
+    match /academic_settings/{settingId} {
+      allow read, get, list: if isSignedIn();
+      allow write, create, update, delete: if isAdmin();
     }
 
     match /subjects/{subjectCode} {

@@ -21,6 +21,10 @@
         "linked_departments": { "type": "array" },
         "credits": { "type": "number" },
         "type": { "type": "string" },
+        "lecture": { "type": "number" },
+        "tutorial": { "type": "number" },
+        "practical": { "type": "number" },
+        "outcomes": { "type": "array" },
         "units": { "type": "array" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
@@ -64,12 +68,51 @@
         "expiresAt": { "type": "string", "format": "date-time" }
       },
       "required": ["title", "description", "type", "priority", "active", "createdAt"]
+    },
+    "User": {
+      "title": "User",
+      "description": "Student user profile parsed from college email domain and onboarding wizard",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "batch": { "type": "string" },
+        "departmentCode": { "type": "string" },
+        "departmentName": { "type": "string" },
+        "section": { "type": "string" },
+        "rollNumber": { "type": "string" },
+        "selectedUserType": { "type": "string" },
+        "effectiveAcademicYear": { "type": "number" },
+        "onboardingCompleted": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "lastLogin": { "type": "string", "format": "date-time" },
+        "profileVersion": { "type": "number" },
+        "lastOpenedRoute": { "type": "string" }
+      },
+      "required": ["uid", "email", "batch", "departmentCode", "departmentName", "section", "rollNumber", "selectedUserType", "effectiveAcademicYear", "onboardingCompleted", "profileVersion"]
+    },
+    "AcademicSettings": {
+      "title": "AcademicSettings",
+      "description": "Holds admin settings such as batch mapping configuration",
+      "type": "object",
+      "properties": {
+        "batchYearMapping": { "type": "object" }
+      },
+      "required": ["batchYearMapping"]
     }
   },
   "firestore": {
     "admins/{uid}": {
       "schema": "Admin",
       "description": "Platform administrators"
+    },
+    "users/{uid}": {
+      "schema": "User",
+      "description": "Durable college students profile"
+    },
+    "academic_settings/{settingId}": {
+      "schema": "AcademicSettings",
+      "description": "Global settings for promotions and mapping academic batches to active years"
     },
     "subjects/{subjectCode}": {
       "schema": "Subject",

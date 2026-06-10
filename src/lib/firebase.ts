@@ -21,9 +21,7 @@ export const storage = getStorage(app);
 
 export const ALLOWED_ADMIN_EMAILS = [
   'jampanarithesh74@gmail.com',
-  'jampanapadmaja7474@gmail.com',
-  '25eg112c49@anurag.edu.in',
-  'ritheshj899@gmail.com'
+  'jampanapadmaja7474@gmail.com'
 ];
 
 export enum OperationType {
