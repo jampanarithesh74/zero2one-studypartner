@@ -5261,6 +5261,7 @@ export default function App() {
                   activeSubView={toolsSubView}
                   setActiveSubView={setToolsSubView}
                   setViewState={setViewState}
+                  getFallbackSyllabusList={getFallbackSyllabusList}
                 />
               </motion.div>
             )}

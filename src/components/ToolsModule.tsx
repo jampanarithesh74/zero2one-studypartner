@@ -14,6 +14,7 @@ interface ToolsModuleProps {
   activeSubView: "menu" | "sgpa" | "cgpa";
   setActiveSubView: (view: "menu" | "sgpa" | "cgpa") => void;
   setViewState: (state: any) => void;
+  getFallbackSyllabusList: (dept: string, sem: number) => any[];
 }
 
 // Default standard UGC CBCS grading scale
@@ -40,7 +41,8 @@ export function ToolsModule({
   showToast, 
   activeSubView, 
   setActiveSubView,
-  setViewState 
+  setViewState,
+  getFallbackSyllabusList
 }: ToolsModuleProps) {
 
   // Format first name nicely
@@ -87,11 +89,11 @@ export function ToolsModule({
   // --- SGPA Predictor State ---
   const [sgpaDept, setSgpaDept] = useState<string>(detectedDept);
   
-  // Available semesters for the chosen department
-  const availableSemicons = SYLLABUS_MAP[sgpaDept] ? Object.keys(SYLLABUS_MAP[sgpaDept]).map(Number).sort((a,b)=>a-b) : [1, 2];
+  // Available semesters for the chosen department (1 to 8 semesters are fully accessible)
+  const availableSemicons = [1, 2, 3, 4, 5, 6, 7, 8];
   
   // Choose default semester based on year: e.g. Year 2 -> Sem 3
-  const defaultSem = availableSemicons.includes((detectedYear * 2) - 1) ? (detectedYear * 2) - 1 : availableSemicons[0] || 1;
+  const defaultSem = (detectedYear * 2) - 1 || 1;
   const [sgpaSem, setSgpaSem] = useState<number>(defaultSem);
 
   // Sync default values when profile loads
@@ -102,8 +104,7 @@ export function ToolsModule({
   }, [detectedDept]);
 
   useEffect(() => {
-    const semic = SYLLABUS_MAP[sgpaDept] ? Object.keys(SYLLABUS_MAP[sgpaDept]).map(Number).sort((a,b)=>a-b) : [1, 2];
-    const def = semic.includes((detectedYear * 2) - 1) ? (detectedYear * 2) - 1 : semic[0] || 1;
+    const def = (detectedYear * 2) - 1 || 1;
     setSgpaSem(def);
   }, [sgpaDept, detectedYear]);
 
@@ -122,12 +123,61 @@ export function ToolsModule({
 
   // Reset or initialize marks for active subjects
   const getCurrentSubjects = () => {
-    if (!SYLLABUS_MAP[sgpaDept]) return [];
-    return SYLLABUS_MAP[sgpaDept][sgpaSem] || [];
+    let baseSubjects: any[] = [];
+    if (SYLLABUS_MAP[sgpaDept] && SYLLABUS_MAP[sgpaDept][sgpaSem]) {
+      baseSubjects = SYLLABUS_MAP[sgpaDept][sgpaSem];
+    } else {
+      // Load fallback list from parent helper mapping
+      baseSubjects = getFallbackSyllabusList(sgpaDept, sgpaSem) || [];
+    }
+
+    // Split courses that have both Theory (Lecture) and Lab (Practical) components 
+    // into: 1 credit for Lab, and the remaining credits (credits - 1) for Theory.
+    const processedSubjects: any[] = [];
+    baseSubjects.forEach(sub => {
+      const ltp = SUBJECT_LTP[sub.code] || null;
+      let hasBothComponents = false;
+      
+      if (ltp) {
+        hasBothComponents = ltp.L > 0 && ltp.P > 0;
+      } else {
+        // Fallback or custom dynamic subject check
+        const titleLower = (sub.title || "").toLowerCase();
+        hasBothComponents = sub.credits > 1 && (titleLower.includes("with lab") || titleLower.includes("theory & practical"));
+      }
+
+      if (hasBothComponents && sub.credits > 1) {
+        // Create theory component (Total credits minus 1)
+        processedSubjects.push({
+          ...sub,
+          code: `${sub.code}-T`,
+          title: `${sub.title} (Theory)`,
+          credits: sub.credits - 1,
+          isSplit: true,
+          originalCode: sub.code,
+        });
+        // Create lab component (1 credit)
+        processedSubjects.push({
+          ...sub,
+          code: `${sub.code}-L`,
+          title: `${sub.title} (Lab)`,
+          credits: 1,
+          isSplit: true,
+          originalCode: sub.code,
+        });
+      } else {
+        processedSubjects.push(sub);
+      }
+    });
+
+    return processedSubjects;
   };
 
   const isLabSubject = (subject: any) => {
-    const code = subject.code;
+    const code = subject.code || "";
+    if (code.endsWith("-L")) return true;
+    if (code.endsWith("-T")) return false;
+
     const ltp = SUBJECT_LTP[code] || { L: 3, T: 0, P: 0 };
     const titleLower = (subject.title || "").toLowerCase();
     
