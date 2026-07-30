@@ -138,5 +138,16 @@ service cloud.firestore {
       allow update: if isAdmin() && isValidNotification(incoming()) && incoming().createdAt == existing().createdAt;
       allow delete: if isAdmin();
     }
+
+    match /events/{eventId} {
+      allow read, list: if true; // Public access to published events
+      allow create, update, delete: if isAdmin();
+
+      match /participants/{participantId} {
+        allow read, list: if true;
+        allow create, update: if true;
+        allow delete: if isAdmin();
+      }
+    }
   }
 }

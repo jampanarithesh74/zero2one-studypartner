@@ -14,8 +14,10 @@ import { doc, getDoc, setDoc, collection, addDoc, query, where, onSnapshot, serv
 import { ref as storageRef, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { PDFViewer } from "./components/PDFViewer";
 import { ToolsModule } from "./components/ToolsModule";
+import { EventsModule } from "./components/EventsModule";
+import { PublicEventPage } from "./components/PublicEventPage";
 
-type ViewState = "year-selection" | "dept-selection" | "sem-selection" | "choice-selection" | "syllabus-view" | "resources-view" | "onboarding" | "login" | "syllabus-copy-view" | "dashboard" | "profile-page" | "tools-page";
+type ViewState = "year-selection" | "dept-selection" | "sem-selection" | "choice-selection" | "syllabus-view" | "resources-view" | "onboarding" | "login" | "syllabus-copy-view" | "dashboard" | "profile-page" | "tools-page" | "public-event-page";
 
 export interface UserProfile {
   uid: string;
@@ -81,6 +83,7 @@ export default function App() {
   const [isRoute404, setIsRoute404] = useState(false);
 
   const [viewState, setViewState] = useState<ViewState>("year-selection");
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
   const [selectedDept, setSelectedDept] = useState<string | null>(null);
   const [selectedSem, setSelectedSem] = useState<number | null>(null);
@@ -395,6 +398,15 @@ export default function App() {
         return;
       }
 
+      // 6.9. Matches `/events/:eventId`
+      const matchEventRoute = matchPath("/events/:eventId", pathname);
+      if (matchEventRoute && matchEventRoute.params.eventId) {
+        setIsRoute404(false);
+        setSelectedEventId(matchEventRoute.params.eventId);
+        setViewState("public-event-page");
+        return;
+      }
+
       // 7. Matches `/`
       const matchRoot = matchPath("/", pathname);
       if (matchRoot) {
@@ -501,7 +513,7 @@ export default function App() {
   };
 
   // Admin Announcement Form State
-  const [activeAdminTab, setActiveAdminTab] = useState<"norm" | "notifications" | "ai_syllabus">("norm");
+  const [activeAdminTab, setActiveAdminTab] = useState<"norm" | "notifications" | "ai_syllabus" | "events">("norm");
   const [aiSelectedDept, setAiSelectedDept] = useState<string>(DEPARTMENTS[0]);
   const [aiSelectedSem, setAiSelectedSem] = useState<number>(1);
   const [aiIsParsing, setAiIsParsing] = useState<boolean>(false);
@@ -4332,7 +4344,7 @@ export default function App() {
                 )}
               </div>
               {isAdmin && (
-                <div className="flex gap-2 items-center">
+                <div className="flex gap-2 items-center flex-wrap">
                   <button 
                     onClick={() => {
                       setActiveAdminTab("norm");
@@ -4354,6 +4366,17 @@ export default function App() {
                     id="admin-notif-control-btn"
                   >
                     <Plus size={12} /> Notification Hub
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setActiveAdminTab("events");
+                      setIsNormPanelOpen(true);
+                    }}
+                    className="px-3 py-1.5 md:px-4 md:py-2 rounded-xl bg-orange-500 hover:bg-orange-600 text-white text-[9px] md:text-[10px] font-black uppercase tracking-wider transition-all hover:scale-105 active:scale-95 flex items-center gap-1.5 shadow-sm font-sans cursor-pointer"
+                    title="ZERO2ONE Events Engine"
+                    id="admin-events-control-btn"
+                  >
+                    <Calendar size={12} /> ZERO2ONE Events
                   </button>
                 </div>
               )}
@@ -5265,10 +5288,21 @@ export default function App() {
                 />
               </motion.div>
             )}
+            {viewState === "public-event-page" && (
+              <motion.div key="public-event" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                <PublicEventPage
+                  eventId={selectedEventId}
+                  onNavigateHome={() => {
+                    navigate("/");
+                    setViewState("year-selection");
+                  }}
+                />
+              </motion.div>
+            )}
           </div>
         )}
       </AnimatePresence>
-      {!isRoute404 && viewState !== "sem-selection" && viewState !== "choice-selection" && viewState !== "resources-view" && viewState !== "syllabus-copy-view" && viewState !== "dashboard" && viewState !== "profile-page" && viewState !== "tools-page" && renderFooter()}
+      {!isRoute404 && viewState !== "sem-selection" && viewState !== "choice-selection" && viewState !== "resources-view" && viewState !== "syllabus-copy-view" && viewState !== "dashboard" && viewState !== "profile-page" && viewState !== "tools-page" && viewState !== "public-event-page" && renderFooter()}
 
       {renderMobileBottomNav()}
       {renderNotificationsDrawer()}
@@ -5587,41 +5621,48 @@ export default function App() {
               animate={{ scale: 1, y: 0, opacity: 1 }}
               exit={{ scale: 0.95, y: 15, opacity: 0 }}
               transition={{ type: "spring", duration: 0.35 }}
-              className={`relative w-full ${activeAdminTab === "notifications" || activeAdminTab === "ai_syllabus" ? "max-w-4xl" : "max-w-xl"} bg-white rounded-[28px] border border-neutral-100 shadow-2xl p-6 md:p-8 overflow-hidden flex flex-col max-h-[90vh] transition-all duration-300`}
+              className={`relative w-full ${activeAdminTab === "notifications" || activeAdminTab === "ai_syllabus" || activeAdminTab === "events" ? "max-w-4xl" : "max-w-xl"} ${activeAdminTab === "events" ? "bg-[#0a0a0a] text-white border-neutral-800" : "bg-white text-neutral-900 border-neutral-100"} rounded-[28px] border shadow-2xl p-6 md:p-8 overflow-hidden flex flex-col max-h-[90vh] transition-all duration-300`}
             >
               <div className="absolute top-0 right-0 w-32 h-32 bg-orange-500/5 rounded-full filter blur-xl translate-x-12 -translate-y-12" />
               
               {/* Header and Tab Control */}
-              <div className="relative flex flex-col gap-4 pb-4 border-b border-neutral-105 select-none mb-5">
+              <div className="relative flex flex-col gap-4 pb-4 border-b border-neutral-800 select-none mb-5">
                 <div className="flex justify-between items-start">
                   <div>
-                    <span className="text-[10px] font-black uppercase text-orange-600 tracking-widest block mb-0.5">Academic Master Control</span>
-                    <h3 className="text-base md:text-lg font-black text-neutral-900 font-sans tracking-tight leading-none">ZERO2ONE Admin Console</h3>
+                    <span className="text-[10px] font-black uppercase text-orange-500 tracking-widest block mb-0.5">Academic Master Control</span>
+                    <h3 className={`text-base md:text-lg font-black font-sans tracking-tight leading-none ${activeAdminTab === "events" ? "text-white" : "text-neutral-900"}`}>ZERO2ONE Admin Console</h3>
                   </div>
                   {normStatus !== "running" && !notifSaving && (
                     <button 
                       onClick={() => setIsNormPanelOpen(false)}
-                      className="p-1.5 rounded-full hover:bg-neutral-100 text-neutral-400 hover:text-neutral-900 transition-colors cursor-pointer"
+                      className={`p-1.5 rounded-full transition-colors cursor-pointer ${activeAdminTab === "events" ? "hover:bg-neutral-800 text-neutral-400 hover:text-white" : "hover:bg-neutral-100 text-neutral-400 hover:text-neutral-900"}`}
                     >
                       <Minimize2 size={16} />
                     </button>
                   )}
                 </div>
 
-                <div className="flex gap-4">
+                <div className="flex flex-wrap gap-3 md:gap-4">
                   <button
                     type="button"
                     onClick={() => setActiveAdminTab("norm")}
                     className={`pb-1 text-xs font-black uppercase tracking-wider transition-all border-b-2 cursor-pointer ${activeAdminTab === "norm" ? "border-orange-500 text-orange-600" : "border-transparent text-neutral-400 hover:text-neutral-600"}`}
                   >
-                    Database Sync
+                    Academic Resources
                   </button>
                   <button
                     type="button"
                     onClick={() => setActiveAdminTab("notifications")}
                     className={`pb-1 text-xs font-black uppercase tracking-wider transition-all border-b-2 cursor-pointer ${activeAdminTab === "notifications" ? "border-orange-500 text-orange-600" : "border-transparent text-neutral-400 hover:text-neutral-600"}`}
                   >
-                    Announcements Hub
+                    Notification Hub
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveAdminTab("events")}
+                    className={`pb-1 text-xs font-black uppercase tracking-wider transition-all border-b-2 cursor-pointer flex items-center gap-1.5 ${activeAdminTab === "events" ? "border-orange-500 text-orange-500 font-extrabold" : "border-transparent text-neutral-400 hover:text-neutral-300"}`}
+                  >
+                    <Calendar size={12} /> ZERO2ONE Events
                   </button>
                   <button
                     type="button"
@@ -5633,7 +5674,11 @@ export default function App() {
                 </div>
               </div>
 
-              {activeAdminTab === "norm" ? (
+              {activeAdminTab === "events" ? (
+                <div className="flex-1 overflow-y-auto pr-1">
+                  <EventsModule currentUserEmail={user?.email} currentUserId={user?.uid} />
+                </div>
+              ) : activeAdminTab === "norm" ? (
                 <>
                   <div className="space-y-4 overflow-y-auto flex-1 pr-1.5 scrollbar-thin">
                     <p className="text-xs text-neutral-500 leading-relaxed">

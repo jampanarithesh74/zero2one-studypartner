@@ -1,8 +1,10 @@
 {
   "projectId": "zero2one-studcomp",
-  "appId": "1:827345021044:web:a342847d1d58eee5944921",
+  "appId": "1:827345021044:web:48b1f9acd84eec63944921",
   "apiKey": "AIzaSyB9h_P6RMAdfv5OjPGqeRJOBnQfU9-CbPo",
   "authDomain": "zero2one-studcomp.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-69227a40-797c-44d3-ae5f-e41fc0f23313",
   "storageBucket": "zero2one-studcomp.firebasestorage.app",
-  "messagingSenderId": "827345021044"
+  "messagingSenderId": "827345021044",
+  "measurementId": ""
 }
