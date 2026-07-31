@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { getBaseAppUrl } from "../../../lib/linkedin";
+import { getBaseAppUrl } from "../../_lib/linkedin";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const code = (req.query?.code as string) || "";
