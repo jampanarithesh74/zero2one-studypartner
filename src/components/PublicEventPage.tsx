@@ -52,6 +52,27 @@ export function PublicEventPage({ eventId, onNavigateHome }: PublicEventPageProp
   const [inRoom, setInRoom] = useState<boolean>(false);
   const [currentParticipant, setCurrentParticipant] = useState<(Participant & { id: string }) | null>(null);
   const [onlineCount, setOnlineCount] = useState<number>(0);
+  const [initialImportedProfile, setInitialImportedProfile] = useState<{ name: string; photo: string; linkedinUrl: string } | null>(null);
+
+  // Check for OAuth redirect params in URL (e.g. when direct window redirect is used)
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("linkedin_auth") === "success" && params.get("profile")) {
+        const rawProfile = params.get("profile");
+        if (rawProfile) {
+          const parsed = JSON.parse(rawProfile);
+          if (parsed && parsed.name) {
+            setInitialImportedProfile(parsed);
+            setShowOnboarding(true);
+            window.history.replaceState({}, document.title, window.location.pathname);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("Failed parsing OAuth redirect params:", e);
+    }
+  }, []);
 
   // 1. Fetch Event metadata
   useEffect(() => {
@@ -435,6 +456,7 @@ export function PublicEventPage({ eventId, onNavigateHome }: PublicEventPageProp
             eventId={event.id}
             eventTitle={event.title}
             onlineCount={onlineCount}
+            initialImportedProfile={initialImportedProfile}
             onClose={() => setShowOnboarding(false)}
             onComplete={handleOnboardingComplete}
           />

@@ -81,15 +81,16 @@ export function EventRoom({
     return () => unsubscribe();
   }, [event.id]);
 
-  // Realtime search filtering by Name, College, or Headline
+  // Realtime search filtering by Name, College, or Department
   const filteredParticipants = useMemo(() => {
     if (!searchQuery.trim()) return participants;
     const q = searchQuery.toLowerCase().trim();
     return participants.filter((p) => {
       const nameMatch = p.name?.toLowerCase().includes(q);
       const collegeMatch = p.college?.toLowerCase().includes(q);
-      const headlineMatch = p.headline?.toLowerCase().includes(q);
-      return nameMatch || collegeMatch || headlineMatch;
+      const deptMatch = p.department?.toLowerCase().includes(q);
+      const yearMatch = p.year?.toLowerCase().includes(q);
+      return nameMatch || collegeMatch || deptMatch || yearMatch;
     });
   }, [participants, searchQuery]);
 
@@ -272,7 +273,7 @@ export function EventRoom({
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search Participants by Name, College, or Headline..."
+                  placeholder="Search Participants by Name, College, or Department..."
                   className="w-full pl-11 pr-4 py-3.5 text-xs md:text-sm bg-[#121212] border border-neutral-800 hover:border-neutral-700 focus:border-orange-500 rounded-2xl outline-none text-white font-medium transition-all placeholder:text-neutral-500 shadow-md"
                 />
                 {searchQuery && (
@@ -353,11 +354,16 @@ export function EventRoom({
                             />
                           </div>
 
-                          {isYou && (
-                            <span className="px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-orange-500/15 border border-orange-500/30 text-orange-400">
-                              YOU
+                          <div className="flex flex-col items-end gap-1">
+                            {isYou && (
+                              <span className="px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-orange-500/15 border border-orange-500/30 text-orange-400">
+                                YOU
+                              </span>
+                            )}
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold bg-[#0A66C2]/15 border border-[#0A66C2]/30 text-[#0A66C2]">
+                              <Linkedin size={10} /> Verified
                             </span>
-                          )}
+                          </div>
                         </div>
 
                         {/* Info Body */}
@@ -371,9 +377,24 @@ export function EventRoom({
                             <span className="truncate">{p.college}</span>
                           </p>
 
-                          <p className="text-[11px] text-neutral-300 font-normal leading-relaxed line-clamp-2">
-                            {p.headline}
-                          </p>
+                          {(p.department || p.year) && (
+                            <p className="text-[11px] text-neutral-400 font-medium flex items-center gap-1.5 truncate">
+                              <GraduationCap size={12} className="shrink-0 text-neutral-500" />
+                              <span className="truncate">
+                                {[p.department, p.year].filter(Boolean).join(" • ")}
+                              </span>
+                            </p>
+                          )}
+
+                          {p.interests && (
+                            <div className="pt-1 flex flex-wrap gap-1">
+                              {p.interests.split(",").slice(0, 3).map((tag, idx) => (
+                                <span key={idx} className="px-2 py-0.5 rounded-md bg-neutral-900 border border-neutral-800 text-[9px] font-mono text-neutral-400">
+                                  #{tag.trim()}
+                                </span>
+                              ))}
+                            </div>
+                          )}
                         </div>
 
                         {/* Action: Connect Button */}

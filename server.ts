@@ -64,6 +64,301 @@ app.get("/api/health", (req, res) => {
   });
 });
 
+// --- LinkedIn Real OAuth 2.0 Endpoints ---
+const getBaseAppUrl = (req: express.Request) => {
+  const host = req.get("host") || "localhost:3000";
+  const protocol = req.get("x-forwarded-proto") || (req.secure ? "https" : "http");
+  return `${protocol}://${host}`;
+};
+
+// Check if LinkedIn OAuth environment variables are configured
+app.get("/api/auth/linkedin/status", (req, res) => {
+  const clientId = process.env.LINKEDIN_CLIENT_ID;
+  const clientSecret = process.env.LINKEDIN_CLIENT_SECRET;
+  const clientOrigin = getBaseAppUrl(req);
+  const redirectUri = process.env.LINKEDIN_REDIRECT_URI || `${clientOrigin}/api/auth/linkedin/callback`;
+
+  res.json({
+    configured: Boolean(clientId && clientSecret),
+    hasClientId: Boolean(clientId),
+    hasClientSecret: Boolean(clientSecret),
+    redirectUri: redirectUri,
+    environmentExample: {
+      LINKEDIN_CLIENT_ID: clientId ? "Configured" : "Missing",
+      LINKEDIN_CLIENT_SECRET: clientSecret ? "Configured" : "Missing",
+      LINKEDIN_REDIRECT_URI: redirectUri
+    }
+  });
+});
+
+// 1. Initiate Real LinkedIn OAuth 2.0 Authorization Code Flow
+app.get("/api/auth/linkedin/start", (req, res) => {
+  const eventId = (req.query.eventId as string) || "";
+  const clientOrigin = (req.query.origin as string) || getBaseAppUrl(req);
+  const clientId = process.env.LINKEDIN_CLIENT_ID;
+  const redirectUri = process.env.LINKEDIN_REDIRECT_URI || `${clientOrigin}/api/auth/linkedin/callback`;
+
+  if (!clientId) {
+    // If LINKEDIN_CLIENT_ID is not configured, present a clear configuration guide page
+    return res.status(400).send(`
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>LinkedIn OAuth Configuration Required</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+      </head>
+      <body class="bg-[#0a0a0a] text-white font-sans antialiased min-h-screen flex items-center justify-center p-6">
+        <div class="max-w-xl w-full bg-[#141414] border border-neutral-800 rounded-3xl p-8 space-y-6 shadow-2xl">
+          <div class="flex items-center gap-3 pb-4 border-b border-neutral-800">
+            <div class="w-12 h-12 rounded-2xl bg-[#0A66C2]/15 border border-[#0A66C2]/30 flex items-center justify-center text-[#0A66C2]">
+              <svg class="w-6 h-6 fill-current" viewBox="0 0 24 24">
+                <path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52-2.28 1.3v-1.11h-2.79v8.37h2.79v-4.93c0-.77.62-1.4 1.39-1.4a1.4 1.4 0 0 1 1.4 1.4v4.93h2.75M6.88 8.56a1.68 1.68 0 0 0 1.68-1.68c0-.93-.75-1.69-1.68-1.69a1.69 1.69 0 0 0-1.69 1.69c0 .93.76 1.68 1.69 1.68m1.39 9.94v-8.37H5.5v8.37h2.77z"/>
+              </svg>
+            </div>
+            <div>
+              <h1 class="text-xl font-bold text-white">LinkedIn Developer App Required</h1>
+              <p class="text-xs text-neutral-400">Real OAuth 2.0 flow is waiting for API credentials</p>
+            </div>
+          </div>
+
+          <div class="space-y-4 text-xs text-neutral-300">
+            <p>To enable authentic LinkedIn Sign-In, please configure your LinkedIn Developer application credentials in environment settings:</p>
+
+            <div class="space-y-2 bg-neutral-900 border border-neutral-800 p-4 rounded-2xl font-mono text-[11px]">
+              <div class="text-neutral-500">// Environment Variables Required</div>
+              <div><span class="text-orange-400">LINKEDIN_CLIENT_ID</span>=<span class="text-neutral-400">&lt;Your Client ID&gt;</span></div>
+              <div><span class="text-orange-400">LINKEDIN_CLIENT_SECRET</span>=<span class="text-neutral-400">&lt;Your Client Secret&gt;</span></div>
+              <div><span class="text-orange-400">LINKEDIN_REDIRECT_URI</span>=<span class="text-emerald-400">${redirectUri}</span></div>
+            </div>
+
+            <div class="space-y-2 bg-neutral-900/60 p-4 rounded-2xl border border-neutral-800">
+              <span class="font-bold text-white block">Step-by-Step LinkedIn App Setup:</span>
+              <ol class="list-decimal list-inside space-y-1 text-neutral-400">
+                <li>Go to <a href="https://www.linkedin.com/developers/apps" target="_blank" rel="noopener noreferrer" class="text-[#0A66C2] underline font-bold">LinkedIn Developer Portal</a></li>
+                <li>Create a new app and link your LinkedIn Company Page</li>
+                <li>Under <strong>Products</strong>, add <em>Sign In with LinkedIn using OpenID Connect</em></li>
+                <li>Under <strong>Auth</strong>, add this exact Redirect URL:</li>
+              </ol>
+              <div class="bg-black p-2.5 rounded-xl font-mono text-[11px] text-emerald-400 border border-neutral-800 break-all select-all mt-2">
+                ${redirectUri}
+              </div>
+            </div>
+          </div>
+
+          <div class="pt-2">
+            <button onclick="window.close()" class="w-full py-3 bg-neutral-800 hover:bg-neutral-700 text-white font-bold text-xs rounded-xl transition-all cursor-pointer">
+              Close Window
+            </button>
+          </div>
+        </div>
+      </body>
+      </html>
+    `);
+  }
+
+  // Construct official LinkedIn Authorization URL
+  const state = JSON.stringify({ eventId, clientOrigin });
+  const params = new URLSearchParams({
+    response_type: "code",
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    state: state,
+    scope: "openid profile email",
+  });
+
+  // REDIRECT DIRECTLY TO OFFICIAL LINKEDIN OAUTH AUTHORIZATION URL
+  const linkedinAuthUrl = `https://www.linkedin.com/oauth/v2/authorization?${params.toString()}`;
+  return res.redirect(linkedinAuthUrl);
+});
+
+// 2. Real OAuth 2.0 Callback Handler
+app.get("/api/auth/linkedin/callback", async (req, res) => {
+  const code = req.query.code as string;
+  const oauthError = req.query.error as string;
+  const oauthErrorDesc = req.query.error_description as string;
+  const rawState = req.query.state as string;
+
+  let eventId = "";
+  let clientOrigin = getBaseAppUrl(req);
+
+  try {
+    if (rawState) {
+      const parsed = JSON.parse(rawState);
+      eventId = parsed.eventId || "";
+      clientOrigin = parsed.clientOrigin || clientOrigin;
+    }
+  } catch (e) {
+    eventId = rawState || "";
+  }
+
+  // Handle OAuth errors or user cancellation on LinkedIn
+  if (oauthError) {
+    const errorMsg = oauthErrorDesc || oauthError || "LinkedIn authorization was cancelled or denied.";
+    return res.send(`
+      <!DOCTYPE html>
+      <html>
+        <head><title>Authentication Cancelled</title></head>
+        <body style="background:#0a0a0a; color:#fff; font-family:sans-serif; text-align:center; padding:40px;">
+          <h3 style="color:#ef4444;">LinkedIn Authorization Error</h3>
+          <p>${errorMsg}</p>
+          <script>
+            if (window.opener) {
+              window.opener.postMessage({
+                type: "LINKEDIN_OAUTH_ERROR",
+                error: ${JSON.stringify(errorMsg)}
+              }, "*");
+              setTimeout(() => { window.close(); }, 2000);
+            } else {
+              setTimeout(() => { window.location.href = "${clientOrigin}/events/${eventId}"; }, 3000);
+            }
+          </script>
+        </body>
+      </html>
+    `);
+  }
+
+  const clientId = process.env.LINKEDIN_CLIENT_ID;
+  const clientSecret = process.env.LINKEDIN_CLIENT_SECRET;
+  const redirectUri = process.env.LINKEDIN_REDIRECT_URI || `${clientOrigin}/api/auth/linkedin/callback`;
+
+  if (!code || !clientId || !clientSecret) {
+    return res.status(400).send(`
+      <!DOCTYPE html>
+      <html>
+        <head><title>Authentication Failed</title></head>
+        <body style="background:#0a0a0a; color:#fff; font-family:sans-serif; text-align:center; padding:40px;">
+          <h3 style="color:#ef4444;">OAuth Configuration Missing</h3>
+          <p>Authorization code or LinkedIn client credentials are invalid.</p>
+          <script>
+            if (window.opener) {
+              window.opener.postMessage({
+                type: "LINKEDIN_OAUTH_ERROR",
+                error: "LinkedIn Client ID or Client Secret missing on server."
+              }, "*");
+              setTimeout(() => { window.close(); }, 2500);
+            }
+          </script>
+        </body>
+      </html>
+    `);
+  }
+
+  try {
+    // REAL Token Exchange with LinkedIn REST API
+    const tokenRes = await fetch("https://www.linkedin.com/oauth/v2/accessToken", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code: code,
+        redirect_uri: redirectUri,
+        client_id: clientId,
+        client_secret: clientSecret,
+      }),
+    });
+
+    const tokenJson = await tokenRes.json();
+
+    if (!tokenRes.ok || !tokenJson.access_token) {
+      console.error("LinkedIn Access Token exchange failed:", tokenJson);
+      const errMsg = tokenJson.error_description || tokenJson.error || "Failed to exchange authorization code for access token.";
+      return res.send(`
+        <!DOCTYPE html>
+        <html>
+          <head><title>Authentication Failed</title></head>
+          <body style="background:#0a0a0a; color:#fff; font-family:sans-serif; text-align:center; padding:40px;">
+            <h3 style="color:#ef4444;">LinkedIn Access Token Error</h3>
+            <p>${errMsg}</p>
+            <script>
+              if (window.opener) {
+                window.opener.postMessage({
+                  type: "LINKEDIN_OAUTH_ERROR",
+                  error: ${JSON.stringify(errMsg)}
+                }, "*");
+                setTimeout(() => { window.close(); }, 2500);
+              }
+            </script>
+          </body>
+        </html>
+      `);
+    }
+
+    // REAL Profile Retrieval from LinkedIn OpenID UserInfo endpoint
+    const userinfoRes = await fetch("https://api.linkedin.com/v2/userinfo", {
+      headers: { Authorization: `Bearer ${tokenJson.access_token}` },
+    });
+
+    if (!userinfoRes.ok) {
+      const errText = await userinfoRes.text();
+      console.error("LinkedIn Userinfo request failed:", errText);
+      throw new Error("Failed to fetch profile information from LinkedIn userinfo endpoint.");
+    }
+
+    const userinfo = await userinfoRes.json();
+
+    // Import ONLY data actually returned by LinkedIn
+    const realProfile = {
+      name: userinfo.name || `${userinfo.given_name || ""} ${userinfo.family_name || ""}`.trim() || "LinkedIn User",
+      photo: userinfo.picture || "",
+      linkedinUrl: userinfo.sub ? `https://www.linkedin.com/in/${userinfo.sub}` : "https://www.linkedin.com",
+      email: userinfo.email || "",
+    };
+
+    const payloadJson = JSON.stringify(realProfile);
+
+    return res.send(`
+      <!DOCTYPE html>
+      <html>
+        <head><title>LinkedIn Authentication Complete</title></head>
+        <body style="background:#0a0a0a; color:#fff; font-family:sans-serif; text-align:center; padding:40px;">
+          <h3 style="color:#10b981;">LinkedIn Authentication Successful!</h3>
+          <p>Redirecting back to ZERO2ONE Events...</p>
+          <script>
+            const profile = ${payloadJson};
+            const targetOrigin = "${clientOrigin}";
+            
+            if (window.opener) {
+              window.opener.postMessage({
+                type: "LINKEDIN_OAUTH_SUCCESS",
+                profile: profile,
+                eventId: "${eventId}"
+              }, "*");
+              setTimeout(() => { window.close(); }, 500);
+            } else {
+              const redirectTarget = "${clientOrigin}/events/${eventId}?linkedin_auth=success&profile=" + encodeURIComponent(JSON.stringify(profile));
+              window.location.href = redirectTarget;
+            }
+          </script>
+        </body>
+      </html>
+    `);
+  } catch (err: any) {
+    console.error("LinkedIn OAuth handler error:", err);
+    return res.send(`
+      <!DOCTYPE html>
+      <html>
+        <head><title>Authentication Error</title></head>
+        <body style="background:#0a0a0a; color:#fff; font-family:sans-serif; text-align:center; padding:40px;">
+          <h3 style="color:#ef4444;">Authentication Error</h3>
+          <p>${err.message || "An error occurred during LinkedIn authentication."}</p>
+          <script>
+            if (window.opener) {
+              window.opener.postMessage({
+                type: "LINKEDIN_OAUTH_ERROR",
+                error: ${JSON.stringify(err.message || "Authentication error.")}
+              }, "*");
+              setTimeout(() => { window.close(); }, 2500);
+            }
+          </script>
+        </body>
+      </html>
+    `);
+  }
+});
+
+
 app.post("/api/upload", upload.single("file"), async (req, res) => {
   console.log("POST /api/upload - Supabase Flow");
   
