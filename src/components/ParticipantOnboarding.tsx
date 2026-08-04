@@ -98,12 +98,24 @@ export function ParticipantOnboarding({
   // Listen for OAuth message from pop-up window
   useEffect(() => {
     const handleOAuthMessage = (event: MessageEvent) => {
-      const origin = event.origin;
-      if (!origin.endsWith(".run.app") && !origin.includes("localhost")) {
+      console.log("OAuth Message Received");
+      console.log("Origin:", event.origin);
+      console.log("Expected:", window.location.origin);
+      console.log("Data:", event.data);
+
+      const allowedOrigins = [
+        window.location.origin,
+        "http://localhost:3000",
+        "http://localhost:5173",
+      ];
+
+      if (!allowedOrigins.includes(event.origin)) {
+        console.warn("Ignoring OAuth message from:", event.origin);
         return;
       }
 
       if (event.data?.type === "LINKEDIN_OAUTH_SUCCESS" && event.data?.profile) {
+        console.log("LinkedIn OAuth Success received.");
         const p = event.data.profile;
         setImportedName(p.name || "LinkedIn User");
         setImportedPhoto(p.photo || "");
@@ -114,6 +126,7 @@ export function ParticipantOnboarding({
           setStep("profile-confirmation");
         }, 800);
       } else if (event.data?.type === "LINKEDIN_OAUTH_ERROR") {
+        console.log("LinkedIn OAuth Error received.");
         setErrorMsg(event.data?.error || "LinkedIn authorization was cancelled or failed.");
         setStep("identity-verification");
       }

@@ -50,7 +50,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               window.opener.postMessage({
                 type: "LINKEDIN_OAUTH_ERROR",
                 error: ${JSON.stringify(errorMsg)}
-              }, "*");
+              }, "${clientOrigin}");
               setTimeout(() => { window.close(); }, 2000);
             } else {
               setTimeout(() => { window.location.href = "${clientOrigin}/events/${eventId}"; }, 3000);
@@ -83,7 +83,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               window.opener.postMessage({
                 type: "LINKEDIN_OAUTH_ERROR",
                 error: "LinkedIn Client ID or Client Secret missing on server."
-              }, "*");
+              }, "${clientOrigin}");
               setTimeout(() => { window.close(); }, 2500);
             }
           </script>
@@ -138,7 +138,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 window.opener.postMessage({
                   type: "LINKEDIN_OAUTH_ERROR",
                   error: ${JSON.stringify(errMsg)}
-                }, "*");
+                }, "${clientOrigin}");
                 setTimeout(() => { window.close(); }, 2500);
               }
             </script>
@@ -180,7 +180,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 window.opener.postMessage({
                   type: "LINKEDIN_OAUTH_ERROR",
                   error: ${JSON.stringify(errMsg)}
-                }, "*");
+                }, "${clientOrigin}");
                 setTimeout(() => { window.close(); }, 2500);
               }
             </script>
@@ -223,7 +223,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 type: "LINKEDIN_OAUTH_SUCCESS",
                 profile: profile,
                 eventId: "${eventId}"
-              }, "*");
+              }, "${clientOrigin}");
               setTimeout(() => { window.close(); }, 500);
             } else {
               const redirectTarget = "${clientOrigin}/events/${eventId}?linkedin_auth=success&profile=" + encodeURIComponent(JSON.stringify(profile));
@@ -247,7 +247,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               window.opener.postMessage({
                 type: "LINKEDIN_OAUTH_ERROR",
                 error: ${JSON.stringify(err.message || "Authentication error.")}
-              }, "*");
+              }, "${clientOrigin}");
               setTimeout(() => { window.close(); }, 2500);
             }
           </script>
