@@ -1,5 +1,18 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { getBaseAppUrl } from "../../_lib/linkedin";
+
+function getBaseAppUrl(req: any) {
+  const host =
+    req.headers?.["x-forwarded-host"] ||
+    req.headers?.host ||
+    (req.get && req.get("host")) ||
+    "localhost:3000";
+
+  const proto =
+    req.headers?.["x-forwarded-proto"] ||
+    (req.secure ? "https" : "http");
+
+  return `${proto}://${host}`;
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const code = (req.query?.code as string) || "";
