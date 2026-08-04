@@ -13,7 +13,8 @@ import {
   ShieldCheck,
   Tag,
   Loader2,
-  Lock
+  Lock,
+  UserCheck
 } from "lucide-react";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "../lib/firebase";
@@ -251,36 +252,6 @@ export function ParticipantOnboarding({
                 </div>
               )}
 
-              {/* Server OAuth Credentials Notice (if missing) */}
-              {oauthStatus && !oauthStatus.configured && (
-                <div className="p-4 bg-amber-500/10 border border-amber-500/25 rounded-2xl text-left space-y-2">
-                  <div className="flex items-center gap-2 text-amber-400 font-bold text-xs">
-                    <AlertCircle size={15} />
-                    <span>LinkedIn OAuth Credentials Required</span>
-                  </div>
-                  <p className="text-[11px] text-neutral-300 leading-relaxed">
-                    To connect to LinkedIn OAuth 2.0, configure <code className="text-orange-400 font-mono">LINKEDIN_CLIENT_ID</code> and <code className="text-orange-400 font-mono">LINKEDIN_CLIENT_SECRET</code> in environment settings.
-                  </p>
-                  <div className="pt-1">
-                    <span className="text-[10px] text-neutral-400 font-mono block">Registered Callback URL:</span>
-                    <span className="text-[10px] text-emerald-400 font-mono break-all select-all block bg-black/50 p-1.5 rounded border border-neutral-800 mt-0.5">
-                      {oauthStatus.redirectUri}
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {/* Security Banner */}
-              <div className="p-4 rounded-2xl bg-neutral-900 border border-neutral-800 space-y-3">
-                <div className="flex items-center gap-2 text-xs font-bold text-neutral-300">
-                  <Lock size={15} className="text-orange-500 shrink-0" />
-                  <span>Authentication is securely handled by LinkedIn.</span>
-                </div>
-                <p className="text-[11px] text-neutral-500 leading-relaxed font-normal pl-6">
-                  ZERO2ONE never stores your LinkedIn password or sensitive credentials.
-                </p>
-              </div>
-
               {/* Benefits Checklist */}
               <div className="space-y-2.5 p-4 rounded-2xl bg-neutral-950 border border-neutral-800/80">
                 <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-neutral-400 block mb-1">
@@ -300,15 +271,45 @@ export function ParticipantOnboarding({
                 </div>
               </div>
 
-              {/* Primary Action Button */}
-              <button
-                type="button"
-                onClick={handleStartOAuth}
-                className="w-full py-4 px-6 rounded-2xl bg-[#0A66C2] hover:bg-[#084e96] active:scale-[0.99] text-white font-black text-xs md:text-sm uppercase tracking-wider transition-all shadow-xl shadow-[#0A66C2]/20 cursor-pointer flex items-center justify-center gap-3 border border-blue-400/30"
-              >
-                <Linkedin size={20} />
-                <span>Continue with LinkedIn</span>
-              </button>
+              {/* Action Buttons */}
+              <div className="space-y-3">
+                <button
+                  type="button"
+                  onClick={handleStartOAuth}
+                  className="w-full py-4 px-6 rounded-2xl bg-[#0A66C2] hover:bg-[#084e96] active:scale-[0.99] text-white font-black text-xs md:text-sm uppercase tracking-wider transition-all shadow-xl shadow-[#0A66C2]/20 cursor-pointer flex items-center justify-center gap-3 border border-blue-400/30"
+                >
+                  <Linkedin size={20} />
+                  <span>Continue with LinkedIn</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setErrorMsg("");
+                    setImportedName(importedName || "");
+                    setStep("profile-confirmation");
+                  }}
+                  className="w-full py-3.5 px-5 rounded-2xl bg-neutral-900 hover:bg-neutral-800 active:scale-[0.99] text-neutral-200 font-bold text-xs transition-all border border-neutral-800 cursor-pointer flex items-center justify-center gap-2.5"
+                >
+                  <UserCheck size={16} className="text-orange-500" />
+                  <span>Continue with Direct Registration</span>
+                </button>
+              </div>
+
+              {/* OAuth Setup Info (Subtle) */}
+              {oauthStatus && !oauthStatus.configured && (
+                <div className="p-3 bg-neutral-900/60 border border-neutral-800/80 rounded-xl text-left space-y-1">
+                  <div className="flex items-center justify-between text-[11px] font-medium text-neutral-400">
+                    <span className="flex items-center gap-1.5 text-neutral-300">
+                      <Linkedin size={13} className="text-[#0A66C2]" /> LinkedIn OAuth 2.0 Integration
+                    </span>
+                    <span className="text-[10px] text-amber-400 font-mono">Requires Env Setup</span>
+                  </div>
+                  <p className="text-[10px] text-neutral-500 leading-normal">
+                    To enable live LinkedIn OAuth popup, set <code className="text-orange-400">LINKEDIN_CLIENT_ID</code> and <code className="text-orange-400">LINKEDIN_CLIENT_SECRET</code> on Vercel. Direct Registration works out of the box.
+                  </p>
+                </div>
+              )}
             </motion.div>
           )}
 

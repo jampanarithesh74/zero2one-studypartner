@@ -6,39 +6,43 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: "Method Not Allowed" });
   }
 
-  const supabaseUrl = process.env.VITE_SUPABASE_URL || `https://itunfoomufsovryiizht.supabase.co`;
-  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const { path: storagePath, fileBase64, contentType } = req.body || {};
 
-  if (!supabaseServiceKey) {
-    return res.status(500).json({ error: "Supabase Service Role Key missing" });
+  if (!fileBase64) {
+    return res.status(400).json({ error: "Missing file payload (fileBase64 required)" });
   }
 
-  try {
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
-    const { path: storagePath, fileBase64, contentType } = req.body || {};
+  const supabaseUrl = process.env.VITE_SUPABASE_URL;
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-    if (fileBase64 && storagePath) {
+  // If Supabase is configured, upload to Supabase Storage
+  if (supabaseUrl && supabaseServiceKey) {
+    try {
+      const supabase = createClient(supabaseUrl, supabaseServiceKey);
       const buffer = Buffer.from(fileBase64, "base64");
       const bucketName = "resources";
-      const cleanPath = storagePath.startsWith("resources/")
+      const cleanPath = storagePath?.startsWith("resources/")
         ? storagePath.replace("resources/", "")
-        : storagePath;
+        : storagePath || `file-${Date.now()}`;
 
       const { error } = await supabase.storage.from(bucketName).upload(cleanPath, buffer, {
         contentType: contentType || "application/octet-stream",
         upsert: true,
       });
 
-      if (error) {
-        return res.status(500).json({ error: error.message });
+      if (!error) {
+        const { data: { publicUrl } } = supabase.storage.from(bucketName).getPublicUrl(cleanPath);
+        return res.status(200).json({ url: publicUrl });
       }
-
-      const { data: { publicUrl } } = supabase.storage.from(bucketName).getPublicUrl(cleanPath);
-      return res.status(200).json({ url: publicUrl });
+      console.warn("Supabase upload error, falling back to data URL:", error.message);
+    } catch (err: any) {
+      console.warn("Supabase upload exception, falling back to data URL:", err.message);
     }
-
-    return res.status(400).json({ error: "Missing file payload (fileBase64 and path required)" });
-  } catch (err: any) {
-    return res.status(500).json({ error: err.message || "Upload failed" });
   }
+
+  // Fallback: Return Base64 Data URL directly so file upload works without Supabase
+  const mime = contentType || "application/pdf";
+  const dataUrl = `data:${mime};base64,${fileBase64}`;
+  return res.status(200).json({ url: dataUrl });
 }
+
