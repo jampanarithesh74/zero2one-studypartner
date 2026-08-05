@@ -6,7 +6,7 @@
 import { motion, AnimatePresence } from "motion/react";
 import { ChevronRight, ChevronDown, Sparkles, ArrowLeft, BookOpen, Clock, Award, FileText, Download, Layers, Shield, LogIn, LogOut, Plus, Trash2, Maximize2, Minimize2, Instagram, ArrowUpRight, Edit2, ExternalLink, RotateCcw, RotateCw, X, Bell, Menu, User as UserIcon, Calendar, Bot, Calculator, Book, TrendingUp, HelpCircle, Check, CheckCircle } from "lucide-react";
 import { useState, useEffect, FormEvent, useRef, Fragment } from "react";
-import { useLocation, useNavigate, matchPath } from "react-router-dom";
+import { useLocation, useNavigate, matchPath, Routes, Route } from "react-router-dom";
 import { DEPARTMENTS, SYLLABUS_MAP, SUBJECT_DETAILS, SUBJECT_LTP } from "./data/syllabus";
 import { auth, db, googleProvider, ALLOWED_ADMIN_EMAILS, handleFirestoreError, OperationType, storage } from "./lib/firebase";
 import { onAuthStateChanged, signInWithPopup, signOut, User } from "firebase/auth";
@@ -16,6 +16,11 @@ import { PDFViewer } from "./components/PDFViewer";
 import { ToolsModule } from "./components/ToolsModule";
 import { EventsModule } from "./components/EventsModule";
 import { PublicEventPage } from "./components/PublicEventPage";
+import { EventsListingPage } from "./components/events/EventsListingPage";
+import { ParticipantJoinPage } from "./components/events/ParticipantJoinPage";
+import { ParticipantOnboardingPage } from "./components/events/ParticipantOnboardingPage";
+import { EventRoomPage } from "./components/events/EventRoomPage";
+import { ParticipantProfilePage } from "./components/events/ParticipantProfilePage";
 
 type ViewState = "year-selection" | "dept-selection" | "sem-selection" | "choice-selection" | "syllabus-view" | "resources-view" | "onboarding" | "login" | "syllabus-copy-view" | "dashboard" | "profile-page" | "tools-page" | "public-event-page";
 
@@ -398,12 +403,9 @@ export default function App() {
         return;
       }
 
-      // 6.9. Matches `/events/:eventId`
-      const matchEventRoute = matchPath("/events/:eventId", pathname);
-      if (matchEventRoute && matchEventRoute.params.eventId) {
+      // 6.9. Matches `/events` or any subroutes like `/events/*`
+      if (pathname.startsWith("/events")) {
         setIsRoute404(false);
-        setSelectedEventId(matchEventRoute.params.eventId);
-        setViewState("public-event-page");
         return;
       }
 
@@ -5288,21 +5290,20 @@ export default function App() {
                 />
               </motion.div>
             )}
-            {viewState === "public-event-page" && (
-              <motion.div key="public-event" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                <PublicEventPage
-                  eventId={selectedEventId}
-                  onNavigateHome={() => {
-                    navigate("/");
-                    setViewState("year-selection");
-                  }}
-                />
-              </motion.div>
+            {location.pathname.startsWith("/events") && (
+              <Routes>
+                <Route path="/events" element={<EventsListingPage currentUserEmail={user?.email} currentUserId={user?.uid} />} />
+                <Route path="/events/:eventId" element={<PublicEventPage onNavigateHome={() => navigate("/events")} />} />
+                <Route path="/events/:eventId/join" element={<ParticipantJoinPage />} />
+                <Route path="/events/:eventId/onboarding" element={<ParticipantOnboardingPage />} />
+                <Route path="/events/:eventId/room" element={<EventRoomPage currentUserEmail={user?.email} currentUserId={user?.uid} />} />
+                <Route path="/events/:eventId/participant/:participantId" element={<ParticipantProfilePage />} />
+              </Routes>
             )}
           </div>
         )}
       </AnimatePresence>
-      {!isRoute404 && viewState !== "sem-selection" && viewState !== "choice-selection" && viewState !== "resources-view" && viewState !== "syllabus-copy-view" && viewState !== "dashboard" && viewState !== "profile-page" && viewState !== "tools-page" && viewState !== "public-event-page" && renderFooter()}
+      {!isRoute404 && !location.pathname.startsWith("/events") && viewState !== "sem-selection" && viewState !== "choice-selection" && viewState !== "resources-view" && viewState !== "syllabus-copy-view" && viewState !== "dashboard" && viewState !== "profile-page" && viewState !== "tools-page" && renderFooter()}
 
       {renderMobileBottomNav()}
       {renderNotificationsDrawer()}

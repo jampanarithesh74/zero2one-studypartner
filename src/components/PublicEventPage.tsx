@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
 import { 
   Calendar, 
@@ -12,13 +13,11 @@ import {
   Copy, 
   Check, 
   Info, 
-  Users,
-  Linkedin
+  Users 
 } from "lucide-react";
 import { doc, getDoc, collection, onSnapshot } from "firebase/firestore";
 import { db } from "../lib/firebase";
-import { ParticipantOnboarding, Participant } from "./ParticipantOnboarding";
-import { EventRoom } from "./EventRoom";
+import { Participant } from "./ParticipantOnboarding";
 
 export interface EventItem {
   id: string;
@@ -37,49 +36,30 @@ export interface EventItem {
 }
 
 interface PublicEventPageProps {
-  eventId: string | null;
-  onNavigateHome: () => void;
+  eventId?: string | null;
+  onNavigateHome?: () => void;
 }
 
-export function PublicEventPage({ eventId, onNavigateHome }: PublicEventPageProps) {
+export function PublicEventPage({ eventId: propEventId, onNavigateHome }: PublicEventPageProps) {
+  const routeParams = useParams<{ eventId: string }>();
+  const navigate = useNavigate();
+
+  const activeEventId = propEventId || routeParams.eventId || null;
+
   const [event, setEvent] = useState<EventItem | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [notFound, setNotFound] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
 
-  // Participant Onboarding & Event Room State
-  const [showOnboarding, setShowOnboarding] = useState<boolean>(false);
-  const [inRoom, setInRoom] = useState<boolean>(false);
   const [currentParticipant, setCurrentParticipant] = useState<(Participant & { id: string }) | null>(null);
   const [onlineCount, setOnlineCount] = useState<number>(0);
-  const [initialImportedProfile, setInitialImportedProfile] = useState<{ name: string; photo: string; linkedinUrl?: string; linkedinSub?: string; email?: string } | null>(null);
-
-  // Check for OAuth redirect params in URL (e.g. when direct window redirect is used)
-  useEffect(() => {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      if (params.get("linkedin_auth") === "success" && params.get("profile")) {
-        const rawProfile = params.get("profile");
-        if (rawProfile) {
-          const parsed = JSON.parse(rawProfile);
-          if (parsed && parsed.name) {
-            setInitialImportedProfile(parsed);
-            setShowOnboarding(true);
-            window.history.replaceState({}, document.title, window.location.pathname);
-          }
-        }
-      }
-    } catch (e) {
-      console.warn("Failed parsing OAuth redirect params:", e);
-    }
-  }, []);
 
   // 1. Fetch Event metadata
   useEffect(() => {
     let isMounted = true;
 
     async function fetchEvent() {
-      if (!eventId) {
+      if (!activeEventId) {
         setNotFound(true);
         setLoading(false);
         return;
@@ -89,7 +69,7 @@ export function PublicEventPage({ eventId, onNavigateHome }: PublicEventPageProp
       setNotFound(false);
 
       try {
-        const docRef = doc(db, "events", eventId);
+        const docRef = doc(db, "events", activeEventId);
         const snapshot = await getDoc(docRef);
 
         if (snapshot.exists()) {
@@ -117,13 +97,13 @@ export function PublicEventPage({ eventId, onNavigateHome }: PublicEventPageProp
     return () => {
       isMounted = false;
     };
-  }, [eventId]);
+  }, [activeEventId]);
 
   // 2. Check local session for existing participant
   useEffect(() => {
-    if (!eventId) return;
+    if (!activeEventId) return;
     try {
-      const stored = localStorage.getItem(`z2o_participant_${eventId}`);
+      const stored = localStorage.getItem(`z2o_participant_${activeEventId}`);
       if (stored) {
         const parsed = JSON.parse(stored);
         if (parsed && parsed.id && parsed.name) {
@@ -133,12 +113,12 @@ export function PublicEventPage({ eventId, onNavigateHome }: PublicEventPageProp
     } catch (e) {
       console.warn("Failed reading stored participant:", e);
     }
-  }, [eventId]);
+  }, [activeEventId]);
 
   // 3. Realtime listener for online participants count
   useEffect(() => {
-    if (!eventId) return;
-    const participantsRef = collection(db, "events", eventId, "participants");
+    if (!activeEventId) return;
+    const participantsRef = collection(db, "events", activeEventId, "participants");
     const unsubscribe = onSnapshot(
       participantsRef,
       (snapshot) => {
@@ -149,7 +129,7 @@ export function PublicEventPage({ eventId, onNavigateHome }: PublicEventPageProp
       }
     );
     return () => unsubscribe();
-  }, [eventId]);
+  }, [activeEventId]);
 
   const formatDateTime = (isoStr: string) => {
     if (!isoStr) return "TBD";
@@ -176,23 +156,21 @@ export function PublicEventPage({ eventId, onNavigateHome }: PublicEventPageProp
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleJoinClick = () => {
-    if (currentParticipant) {
-      setInRoom(true);
+  const handleBackToEvents = () => {
+    if (onNavigateHome) {
+      onNavigateHome();
     } else {
-      setShowOnboarding(true);
+      navigate("/events");
     }
   };
 
-  const handleOnboardingComplete = (participant: Participant & { id: string }) => {
-    setCurrentParticipant(participant);
-    setShowOnboarding(false);
-    try {
-      localStorage.setItem(`z2o_participant_${eventId}`, JSON.stringify(participant));
-    } catch (e) {
-      console.warn("Could not save participant to local storage:", e);
+  const handlePrimaryAction = () => {
+    if (!activeEventId) return;
+    if (currentParticipant) {
+      navigate(`/events/${activeEventId}/room`);
+    } else {
+      navigate(`/events/${activeEventId}/join`);
     }
-    setInRoom(true);
   };
 
   const getStatusBadge = (statusVal: string) => {
@@ -222,30 +200,19 @@ export function PublicEventPage({ eventId, onNavigateHome }: PublicEventPageProp
     }
   };
 
-  // Render Event Room view if user clicked Enter Room
-  if (inRoom && event && currentParticipant) {
-    return (
-      <EventRoom
-        event={event}
-        currentParticipant={currentParticipant}
-        onBackToEvent={() => setInRoom(false)}
-        onNavigateHome={onNavigateHome}
-      />
-    );
-  }
-
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white font-sans selection:bg-orange-500 selection:text-white pb-20 pt-4 px-4 sm:px-6">
       <div className="max-w-3xl mx-auto space-y-6">
+        
         {/* Top Header Bar */}
         <header className="flex items-center justify-between p-4 rounded-2xl bg-neutral-900/80 border border-neutral-800 backdrop-blur-md">
           <button
             type="button"
-            onClick={onNavigateHome}
+            onClick={handleBackToEvents}
             className="flex items-center gap-2 text-xs font-bold text-neutral-300 hover:text-white transition-colors cursor-pointer"
           >
             <ArrowLeft size={16} className="text-orange-500" />
-            <span>Return Home</span>
+            <span>Events Directory</span>
           </button>
 
           <div className="flex items-center gap-2">
@@ -298,11 +265,11 @@ export function PublicEventPage({ eventId, onNavigateHome }: PublicEventPageProp
 
             <button
               type="button"
-              onClick={onNavigateHome}
+              onClick={handleBackToEvents}
               className="px-6 py-3 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-black text-xs uppercase tracking-wider transition-all shadow-lg hover:shadow-orange-500/20 active:scale-95 cursor-pointer flex items-center gap-2 border border-orange-400/40"
             >
               <ArrowLeft size={16} />
-              Return Home
+              Return to Events Directory
             </button>
           </motion.div>
         )}
@@ -427,11 +394,11 @@ export function PublicEventPage({ eventId, onNavigateHome }: PublicEventPageProp
                 </div>
               )}
 
-              {/* Large Primary Action Button: Join Event / Enter Room */}
+              {/* Action Button: Join Event / Enter Room */}
               <div className="pt-4 border-t border-neutral-800 space-y-3">
                 <button
                   type="button"
-                  onClick={handleJoinClick}
+                  onClick={handlePrimaryAction}
                   className="w-full py-4 px-6 rounded-2xl bg-orange-500 hover:bg-orange-600 active:scale-[0.99] text-white font-black text-sm uppercase tracking-wider transition-all shadow-xl shadow-orange-500/10 hover:shadow-orange-500/25 cursor-pointer flex items-center justify-center gap-3 border border-orange-400/40"
                 >
                   <Sparkles size={18} />
@@ -448,20 +415,6 @@ export function PublicEventPage({ eventId, onNavigateHome }: PublicEventPageProp
           </motion.div>
         )}
       </div>
-
-      {/* Participant Onboarding Modal */}
-      <AnimatePresence>
-        {showOnboarding && event && (
-          <ParticipantOnboarding
-            eventId={event.id}
-            eventTitle={event.title}
-            onlineCount={onlineCount}
-            initialImportedProfile={initialImportedProfile}
-            onClose={() => setShowOnboarding(false)}
-            onComplete={handleOnboardingComplete}
-          />
-        )}
-      </AnimatePresence>
     </div>
   );
 }
