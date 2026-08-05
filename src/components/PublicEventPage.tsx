@@ -52,7 +52,7 @@ export function PublicEventPage({ eventId, onNavigateHome }: PublicEventPageProp
   const [inRoom, setInRoom] = useState<boolean>(false);
   const [currentParticipant, setCurrentParticipant] = useState<(Participant & { id: string }) | null>(null);
   const [onlineCount, setOnlineCount] = useState<number>(0);
-  const [initialImportedProfile, setInitialImportedProfile] = useState<{ name: string; photo: string; linkedinUrl: string } | null>(null);
+  const [initialImportedProfile, setInitialImportedProfile] = useState<{ name: string; photo: string; linkedinUrl?: string; linkedinSub?: string; email?: string } | null>(null);
 
   // Check for OAuth redirect params in URL (e.g. when direct window redirect is used)
   useEffect(() => {

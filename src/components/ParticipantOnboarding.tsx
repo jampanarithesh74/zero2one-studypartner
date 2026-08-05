@@ -16,7 +16,17 @@ import {
   Lock,
   UserCheck
 } from "lucide-react";
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { 
+  collection, 
+  addDoc, 
+  doc, 
+  getDocs, 
+  query, 
+  where, 
+  limit, 
+  updateDoc, 
+  serverTimestamp 
+} from "firebase/firestore";
 import { db } from "../lib/firebase";
 
 export interface Participant {
@@ -24,11 +34,14 @@ export interface Participant {
   name: string;
   photo: string;
   linkedinUrl: string;
+  linkedinSub?: string;
+  email?: string;
   college: string;
   department?: string;
   year?: string;
   interests?: string;
   joinedAt?: any;
+  lastSeen?: any;
   online: boolean;
 }
 
@@ -36,9 +49,31 @@ interface ParticipantOnboardingProps {
   eventId: string;
   eventTitle: string;
   onlineCount: number;
-  initialImportedProfile?: { name: string; photo: string; linkedinUrl: string } | null;
+  initialImportedProfile?: { 
+    name: string; 
+    photo: string; 
+    linkedinUrl?: string; 
+    linkedinSub?: string; 
+    email?: string 
+  } | null;
   onClose: () => void;
   onComplete: (participant: Participant & { id: string }) => void;
+}
+
+export function normalizeAndValidateLinkedinUrl(url: string): { valid: boolean; normalized: string } {
+  if (!url || typeof url !== "string") {
+    return { valid: false, normalized: "" };
+  }
+  let trimmed = url.trim();
+  if (!trimmed) {
+    return { valid: false, normalized: "" };
+  }
+  if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
+    trimmed = "https://" + trimmed;
+  }
+  // Validate standard LinkedIn profile URLs: https://www.linkedin.com/in/... or https://linkedin.com/in/...
+  const regex = /^https?:\/\/(www\.)?linkedin\.com\/in\/[a-zA-Z0-9%_\-.]+\/?.*$/i;
+  return { valid: regex.test(trimmed), normalized: trimmed };
 }
 
 export function ParticipantOnboarding({
@@ -61,12 +96,14 @@ export function ParticipantOnboarding({
     redirectUri: string;
   } | null>(null);
 
-  // Imported from LinkedIn (Read-Only)
+  // Imported from LinkedIn
   const [importedName, setImportedName] = useState<string>(initialImportedProfile?.name || "");
   const [importedPhoto, setImportedPhoto] = useState<string>(initialImportedProfile?.photo || "");
-  const [importedLinkedinUrl, setImportedLinkedinUrl] = useState<string>(initialImportedProfile?.linkedinUrl || "");
+  const [importedEmail, setImportedEmail] = useState<string>(initialImportedProfile?.email || "");
+  const [importedLinkedinSub, setImportedLinkedinSub] = useState<string>(initialImportedProfile?.linkedinSub || "");
 
-  // Missing fields collected from user
+  // Editable fields collected from user
+  const [linkedinUrlInput, setLinkedinUrlInput] = useState<string>(initialImportedProfile?.linkedinUrl || "");
   const [college, setCollege] = useState<string>("Anurag University");
   const [department, setDepartment] = useState<string>("");
   const [year, setYear] = useState<string>("");
@@ -95,6 +132,46 @@ export function ParticipantOnboarding({
       });
   }, []);
 
+  // Auto-check for existing participant in Firestore to pre-fill saved profile info
+  useEffect(() => {
+    if (!eventId || (!importedLinkedinSub && !importedEmail)) return;
+
+    let isCancelled = false;
+
+    async function checkExistingParticipant() {
+      try {
+        const participantsRef = collection(db, "events", eventId, "participants");
+        let q;
+        if (importedLinkedinSub) {
+          q = query(participantsRef, where("linkedinSub", "==", importedLinkedinSub), limit(1));
+        } else if (importedEmail) {
+          q = query(participantsRef, where("email", "==", importedEmail), limit(1));
+        }
+
+        if (q) {
+          const snap = await getDocs(q);
+          if (!snap.empty && !isCancelled) {
+            const existing = snap.docs[0].data() as Participant;
+            console.log("[Duplicate Detection] Found existing participant in Firestore:", snap.docs[0].id, existing);
+            if (existing.linkedinUrl) setLinkedinUrlInput(existing.linkedinUrl);
+            if (existing.college) setCollege(existing.college);
+            if (existing.department) setDepartment(existing.department);
+            if (existing.year) setYear(existing.year);
+            if (existing.interests) setInterests(existing.interests);
+          }
+        }
+      } catch (err) {
+        console.warn("[Duplicate Detection] Error checking existing participant:", err);
+      }
+    }
+
+    checkExistingParticipant();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [eventId, importedLinkedinSub, importedEmail]);
+
   // Listen for OAuth message from pop-up window
   useEffect(() => {
     const handleOAuthMessage = (event: MessageEvent) => {
@@ -119,7 +196,12 @@ export function ParticipantOnboarding({
         const p = event.data.profile;
         setImportedName(p.name || "LinkedIn User");
         setImportedPhoto(p.photo || "");
-        setImportedLinkedinUrl(p.linkedinUrl || "https://www.linkedin.com");
+        setImportedEmail(p.email || "");
+        setImportedLinkedinSub(p.linkedinSub || "");
+        
+        if (p.linkedinUrl) {
+          setLinkedinUrlInput(p.linkedinUrl);
+        }
 
         setStep("importing-profile");
         setTimeout(() => {
@@ -161,9 +243,16 @@ export function ParticipantOnboarding({
     }
   };
 
-  // Step 5: Confirm Profile & Create Participant Document
+  // Confirm Profile & Create/Update Participant Document with Duplicate Check
   const handleConfirmProfile = async () => {
     setErrorMsg("");
+
+    const { valid: isUrlValid, normalized: cleanLinkedinUrl } = normalizeAndValidateLinkedinUrl(linkedinUrlInput);
+
+    if (!isUrlValid) {
+      setErrorMsg("Please enter a valid LinkedIn Profile URL (e.g. https://www.linkedin.com/in/yourname).");
+      return;
+    }
 
     if (!college.trim()) {
       setErrorMsg("Please enter your College or University.");
@@ -173,31 +262,99 @@ export function ParticipantOnboarding({
     setSaving(true);
 
     try {
-      const participantData: Omit<Participant, "id"> = {
-        name: importedName.trim(),
-        photo: importedPhoto.trim() || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(importedName)}`,
-        linkedinUrl: importedLinkedinUrl.trim(),
-        college: college.trim(),
-        department: department.trim() || undefined,
-        year: year.trim() || undefined,
-        interests: interests.trim() || undefined,
-        joinedAt: serverTimestamp(),
-        online: true,
-      };
-
       const participantsRef = collection(db, "events", eventId, "participants");
-      const docRef = await addDoc(participantsRef, participantData);
 
-      const finalParticipant: Participant & { id: string } = {
-        id: docRef.id,
-        ...participantData,
-      };
+      let existingDocId: string | null = null;
+      let existingDocData: any = null;
+
+      // 1. Search for existing participant by linkedinSub
+      if (importedLinkedinSub) {
+        console.log(`[Duplicate Prevention] Searching for existing participant with linkedinSub="${importedLinkedinSub}"`);
+        const qSub = query(participantsRef, where("linkedinSub", "==", importedLinkedinSub), limit(1));
+        const snapSub = await getDocs(qSub);
+        if (!snapSub.empty) {
+          existingDocId = snapSub.docs[0].id;
+          existingDocData = snapSub.docs[0].data();
+          console.log(`[Duplicate Prevention] Duplicate detected by linkedinSub! Doc ID: ${existingDocId}`);
+        }
+      }
+
+      // 2. Fallback check by email if linkedinSub didn't match
+      if (!existingDocId && importedEmail) {
+        console.log(`[Duplicate Prevention] Searching for existing participant with email="${importedEmail}"`);
+        const qEmail = query(participantsRef, where("email", "==", importedEmail), limit(1));
+        const snapEmail = await getDocs(qEmail);
+        if (!snapEmail.empty) {
+          existingDocId = snapEmail.docs[0].id;
+          existingDocData = snapEmail.docs[0].data();
+          console.log(`[Duplicate Prevention] Duplicate detected by email! Doc ID: ${existingDocId}`);
+        }
+      }
+
+      let finalParticipant: Participant & { id: string };
+
+      if (existingDocId) {
+        // UPDATE existing document - DO NOT create duplicate
+        const docRef = doc(db, "events", eventId, "participants", existingDocId);
+        const updatePayload: Partial<Participant> = {
+          name: importedName.trim() || existingDocData.name,
+          photo: importedPhoto.trim() || existingDocData.photo,
+          linkedinUrl: cleanLinkedinUrl,
+          linkedinSub: importedLinkedinSub || existingDocData.linkedinSub || undefined,
+          email: importedEmail || existingDocData.email || undefined,
+          college: college.trim(),
+          department: department.trim() || undefined,
+          year: year.trim() || undefined,
+          interests: interests.trim() || undefined,
+          online: true,
+          lastSeen: serverTimestamp(),
+        };
+
+        await updateDoc(docRef, updatePayload);
+
+        finalParticipant = {
+          id: existingDocId,
+          ...existingDocData,
+          ...updatePayload,
+        };
+        console.log(`[Duplicate Prevention] Existing participant updated successfully: ${existingDocId}`);
+      } else {
+        // CREATE new participant
+        const newParticipantData: Omit<Participant, "id"> = {
+          name: importedName.trim(),
+          photo: importedPhoto.trim() || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(importedName)}`,
+          linkedinUrl: cleanLinkedinUrl,
+          linkedinSub: importedLinkedinSub || undefined,
+          email: importedEmail || undefined,
+          college: college.trim(),
+          department: department.trim() || undefined,
+          year: year.trim() || undefined,
+          interests: interests.trim() || undefined,
+          joinedAt: serverTimestamp(),
+          lastSeen: serverTimestamp(),
+          online: true,
+        };
+
+        const docRef = await addDoc(participantsRef, newParticipantData);
+        finalParticipant = {
+          id: docRef.id,
+          ...newParticipantData,
+        };
+        console.log(`[Duplicate Prevention] New participant document created: ${docRef.id}`);
+      }
+
+      // Persist in localStorage
+      try {
+        localStorage.setItem(`z2o_participant_${eventId}`, JSON.stringify(finalParticipant));
+      } catch (e) {
+        console.warn("Failed saving participant session to localStorage:", e);
+      }
 
       setCreatedParticipant(finalParticipant);
       setSaving(false);
       setStep("welcome");
     } catch (err: any) {
-      console.error("Error creating participant:", err);
+      console.error("Error creating or updating participant:", err);
       setErrorMsg(err.message || "Failed to complete onboarding. Please try again.");
       setSaving(false);
     }
@@ -397,12 +554,33 @@ export function ParticipantOnboarding({
                       IMPORTED FROM LINKEDIN
                     </span>
                     <h3 className="text-base font-black text-white truncate">{importedName}</h3>
-                    <p className="text-[11px] text-neutral-400 font-mono truncate">{importedLinkedinUrl}</p>
+                    {importedEmail ? (
+                      <p className="text-[11px] text-neutral-400 font-mono truncate">{importedEmail}</p>
+                    ) : (
+                      <p className="text-[11px] text-neutral-400 font-mono truncate">Verified Account</p>
+                    )}
                   </div>
                 </div>
 
-                {/* Form for missing fields only */}
+                {/* Form for required and missing fields */}
                 <div className="space-y-3 text-left">
+                  {/* Required Editable LinkedIn Profile URL */}
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black uppercase text-neutral-400 tracking-wider flex items-center gap-1.5">
+                      <Linkedin size={12} className="text-[#0A66C2]" /> LinkedIn Profile URL *
+                    </label>
+                    <input
+                      type="url"
+                      required
+                      value={linkedinUrlInput}
+                      onChange={(e) => setLinkedinUrlInput(e.target.value)}
+                      placeholder="e.g. https://www.linkedin.com/in/yourname"
+                      className="w-full px-3.5 py-2.5 text-xs bg-neutral-950 border border-neutral-800 focus:border-[#0A66C2] rounded-xl outline-none text-white font-medium transition-all"
+                    />
+                    <p className="text-[10px] text-neutral-500">
+                      Format: <code className="text-blue-400 font-mono">https://www.linkedin.com/in/yourname</code>
+                    </p>
+                  </div>
                   {/* College / University * */}
                   <div className="space-y-1">
                     <label className="text-[10px] font-black uppercase text-neutral-400 tracking-wider flex items-center gap-1.5">

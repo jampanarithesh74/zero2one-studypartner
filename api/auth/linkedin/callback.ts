@@ -201,7 +201,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const realProfile = {
       name: userinfo.name || `${userinfo.given_name || ""} ${userinfo.family_name || ""}`.trim() || "LinkedIn User",
       photo: userinfo.picture || "",
-      linkedinUrl: userinfo.sub ? `https://www.linkedin.com/in/${userinfo.sub}` : "https://www.linkedin.com",
+      linkedinUrl: "",
+      linkedinSub: userinfo.sub || "",
       email: userinfo.email || "",
     };
 
