@@ -13,8 +13,8 @@ import {
   ShieldCheck,
   Tag,
   Loader2,
-  Lock,
-  UserCheck
+  UserCheck,
+  ExternalLink
 } from "lucide-react";
 import { 
   collection, 
@@ -33,7 +33,8 @@ export interface Participant {
   id?: string;
   name: string;
   photo: string;
-  linkedinUrl: string;
+  linkedinUsername?: string;
+  linkedinUrl?: string;
   linkedinSub?: string;
   email?: string;
   college: string;
@@ -52,6 +53,7 @@ interface ParticipantOnboardingProps {
   initialImportedProfile?: { 
     name: string; 
     photo: string; 
+    linkedinUsername?: string;
     linkedinUrl?: string; 
     linkedinSub?: string; 
     email?: string 
@@ -60,20 +62,62 @@ interface ParticipantOnboardingProps {
   onComplete: (participant: Participant & { id: string }) => void;
 }
 
-export function normalizeAndValidateLinkedinUrl(url: string): { valid: boolean; normalized: string } {
-  if (!url || typeof url !== "string") {
-    return { valid: false, normalized: "" };
+export function extractLinkedinUsername(input: string): string {
+  if (!input || typeof input !== "string") return "";
+  let cleaned = input.trim();
+  // Strip protocol and domain prefixes if present
+  cleaned = cleaned.replace(/^https?:\/\/(www\.)?linkedin\.com\/in\//i, "");
+  cleaned = cleaned.replace(/^linkedin\.com\/in\//i, "");
+  cleaned = cleaned.replace(/^\/?in\//i, "");
+  // Remove trailing slashes and query parameters / hashes
+  cleaned = cleaned.split("?")[0].split("#")[0];
+  cleaned = cleaned.replace(/\/+$|^\/+/g, "");
+  return cleaned.trim();
+}
+
+export function validateLinkedinUsername(usernameInput: string): { valid: boolean; username: string; error?: string } {
+  const clean = extractLinkedinUsername(usernameInput);
+  if (!clean) {
+    return { valid: false, username: "", error: "LinkedIn username cannot be empty." };
   }
-  let trimmed = url.trim();
-  if (!trimmed) {
-    return { valid: false, normalized: "" };
+  // Allowed characters: letters, numbers, hyphen (-), underscore (_)
+  const regex = /^[a-zA-Z0-9_\-]+$/;
+  if (!regex.test(clean)) {
+    return {
+      valid: false,
+      username: clean,
+      error: "Username can only contain letters, numbers, hyphens (-), and underscores (_)."
+    };
   }
-  if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
-    trimmed = "https://" + trimmed;
+  return { valid: true, username: clean };
+}
+
+export function getLinkedinProfileUrl(participant?: { linkedinUsername?: string; linkedinUrl?: string } | string): string {
+  if (!participant) return "https://www.linkedin.com";
+  
+  if (typeof participant === "string") {
+    const slug = extractLinkedinUsername(participant);
+    if (slug) return `https://www.linkedin.com/in/${slug}`;
+    if (participant.startsWith("http://") || participant.startsWith("https://")) return participant;
+    return "https://www.linkedin.com";
   }
-  // Validate standard LinkedIn profile URLs: https://www.linkedin.com/in/... or https://linkedin.com/in/...
-  const regex = /^https?:\/\/(www\.)?linkedin\.com\/in\/[a-zA-Z0-9%_\-.]+\/?.*$/i;
-  return { valid: regex.test(trimmed), normalized: trimmed };
+
+  if (participant.linkedinUsername) {
+    const slug = extractLinkedinUsername(participant.linkedinUsername);
+    if (slug) return `https://www.linkedin.com/in/${slug}`;
+  }
+
+  if (participant.linkedinUrl) {
+    const slug = extractLinkedinUsername(participant.linkedinUrl);
+    if (slug) return `https://www.linkedin.com/in/${slug}`;
+    let url = participant.linkedinUrl.trim();
+    if (!url.startsWith("http://") && !url.startsWith("https://")) {
+      url = `https://${url}`;
+    }
+    return url;
+  }
+
+  return "https://www.linkedin.com";
 }
 
 export function ParticipantOnboarding({
@@ -85,9 +129,14 @@ export function ParticipantOnboarding({
   onComplete,
 }: ParticipantOnboardingProps) {
   // Steps:
-  // "identity-verification" -> "importing-profile" -> "profile-confirmation" -> "welcome"
+  // "identity-verification" -> "importing-profile" -> "profile-confirmation" -> "linkedin-username-verification" -> "event-details" -> "welcome"
   const [step, setStep] = useState<
-    "identity-verification" | "importing-profile" | "profile-confirmation" | "welcome"
+    | "identity-verification"
+    | "importing-profile"
+    | "profile-confirmation"
+    | "linkedin-username-verification"
+    | "event-details"
+    | "welcome"
   >(initialImportedProfile ? "profile-confirmation" : "identity-verification");
 
   // Server OAuth Status Check
@@ -102,8 +151,15 @@ export function ParticipantOnboarding({
   const [importedEmail, setImportedEmail] = useState<string>(initialImportedProfile?.email || "");
   const [importedLinkedinSub, setImportedLinkedinSub] = useState<string>(initialImportedProfile?.linkedinSub || "");
 
-  // Editable fields collected from user
-  const [linkedinUrlInput, setLinkedinUrlInput] = useState<string>(initialImportedProfile?.linkedinUrl || "");
+  // LinkedIn Username state & verification
+  const initialUsernameSlug = extractLinkedinUsername(
+    initialImportedProfile?.linkedinUsername || initialImportedProfile?.linkedinUrl || ""
+  );
+  const [linkedinUsername, setLinkedinUsername] = useState<string>(initialUsernameSlug);
+  const [isProfileConfirmed, setIsProfileConfirmed] = useState<boolean>(Boolean(initialUsernameSlug));
+  const [hasSavedUsername, setHasSavedUsername] = useState<boolean>(Boolean(initialUsernameSlug));
+
+  // Academic & Event details
   const [college, setCollege] = useState<string>("Anurag University");
   const [department, setDepartment] = useState<string>("");
   const [year, setYear] = useState<string>("");
@@ -153,7 +209,15 @@ export function ParticipantOnboarding({
           if (!snap.empty && !isCancelled) {
             const existing = snap.docs[0].data() as Participant;
             console.log("[Duplicate Detection] Found existing participant in Firestore:", snap.docs[0].id, existing);
-            if (existing.linkedinUrl) setLinkedinUrlInput(existing.linkedinUrl);
+            
+            const savedSlug = extractLinkedinUsername(
+              existing.linkedinUsername || existing.linkedinUrl || ""
+            );
+            if (savedSlug) {
+              setLinkedinUsername(savedSlug);
+              setIsProfileConfirmed(true);
+              setHasSavedUsername(true);
+            }
             if (existing.college) setCollege(existing.college);
             if (existing.department) setDepartment(existing.department);
             if (existing.year) setYear(existing.year);
@@ -175,11 +239,6 @@ export function ParticipantOnboarding({
   // Listen for OAuth message from pop-up window
   useEffect(() => {
     const handleOAuthMessage = (event: MessageEvent) => {
-      console.log("OAuth Message Received");
-      console.log("Origin:", event.origin);
-      console.log("Expected:", window.location.origin);
-      console.log("Data:", event.data);
-
       const allowedOrigins = [
         window.location.origin,
         "http://localhost:3000",
@@ -187,7 +246,6 @@ export function ParticipantOnboarding({
       ];
 
       if (!allowedOrigins.includes(event.origin)) {
-        console.warn("Ignoring OAuth message from:", event.origin);
         return;
       }
 
@@ -199,8 +257,11 @@ export function ParticipantOnboarding({
         setImportedEmail(p.email || "");
         setImportedLinkedinSub(p.linkedinSub || "");
         
-        if (p.linkedinUrl) {
-          setLinkedinUrlInput(p.linkedinUrl);
+        const extractedSlug = extractLinkedinUsername(p.linkedinUsername || p.linkedinUrl || "");
+        if (extractedSlug) {
+          setLinkedinUsername(extractedSlug);
+          setIsProfileConfirmed(true);
+          setHasSavedUsername(true);
         }
 
         setStep("importing-profile");
@@ -243,23 +304,39 @@ export function ParticipantOnboarding({
     }
   };
 
-  // Confirm Profile & Create/Update Participant Document with Duplicate Check
+  // Handle transition from Profile Confirmation
+  const handleProfileConfirmNext = () => {
+    setErrorMsg("");
+    const cleanSlug = extractLinkedinUsername(linkedinUsername);
+    if (hasSavedUsername && cleanSlug && validateLinkedinUsername(cleanSlug).valid) {
+      // Returning user already has saved valid username -> skip username verification step
+      console.log(`[Onboarding] Returning user with saved username "${cleanSlug}". Skipping verification step.`);
+      setStep("event-details");
+    } else {
+      setStep("linkedin-username-verification");
+    }
+  };
+
+  // Final Submit & Save Participant Document with Duplicate Check
   const handleConfirmProfile = async () => {
     setErrorMsg("");
 
-    const { valid: isUrlValid, normalized: cleanLinkedinUrl } = normalizeAndValidateLinkedinUrl(linkedinUrlInput);
-
-    if (!isUrlValid) {
-      setErrorMsg("Please enter a valid LinkedIn Profile URL (e.g. https://www.linkedin.com/in/yourname).");
+    const validation = validateLinkedinUsername(linkedinUsername);
+    if (!validation.valid) {
+      setErrorMsg(validation.error || "Please enter a valid LinkedIn username.");
+      setStep("linkedin-username-verification");
       return;
     }
 
     if (!college.trim()) {
       setErrorMsg("Please enter your College or University.");
+      setStep("event-details");
       return;
     }
 
     setSaving(true);
+    const cleanSlug = validation.username;
+    const fullLinkedinUrl = `https://www.linkedin.com/in/${cleanSlug}`;
 
     try {
       const participantsRef = collection(db, "events", eventId, "participants");
@@ -299,7 +376,8 @@ export function ParticipantOnboarding({
         const updatePayload: Partial<Participant> = {
           name: importedName.trim() || existingDocData.name,
           photo: importedPhoto.trim() || existingDocData.photo,
-          linkedinUrl: cleanLinkedinUrl,
+          linkedinUsername: cleanSlug,
+          linkedinUrl: fullLinkedinUrl,
           linkedinSub: importedLinkedinSub || existingDocData.linkedinSub || undefined,
           email: importedEmail || existingDocData.email || undefined,
           college: college.trim(),
@@ -323,7 +401,8 @@ export function ParticipantOnboarding({
         const newParticipantData: Omit<Participant, "id"> = {
           name: importedName.trim(),
           photo: importedPhoto.trim() || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(importedName)}`,
-          linkedinUrl: cleanLinkedinUrl,
+          linkedinUsername: cleanSlug,
+          linkedinUrl: fullLinkedinUrl,
           linkedinSub: importedLinkedinSub || undefined,
           email: importedEmail || undefined,
           college: college.trim(),
@@ -483,7 +562,7 @@ export function ParticipantOnboarding({
             </motion.div>
           )}
 
-          {/* STEP 2/3: IMPORTING PROFILE (LOADING SCREEN) */}
+          {/* STEP 2: IMPORTING PROFILE (LOADING SCREEN) */}
           {step === "importing-profile" && (
             <motion.div
               key="step-importing-profile"
@@ -511,7 +590,7 @@ export function ParticipantOnboarding({
             </motion.div>
           )}
 
-          {/* STEP 4: PROFILE CONFIRMATION */}
+          {/* STEP 3: PROFILE CONFIRMATION */}
           {step === "profile-confirmation" && (
             <motion.div
               key="step-profile-confirmation"
@@ -530,7 +609,7 @@ export function ParticipantOnboarding({
                   Confirm Your Profile
                 </h2>
                 <p className="text-xs text-neutral-400 font-medium">
-                  Review imported details and complete any missing information.
+                  Review imported details from your LinkedIn account.
                 </p>
               </div>
 
@@ -562,82 +641,19 @@ export function ParticipantOnboarding({
                   </div>
                 </div>
 
-                {/* Form for required and missing fields */}
-                <div className="space-y-3 text-left">
-                  {/* Required Editable LinkedIn Profile URL */}
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black uppercase text-neutral-400 tracking-wider flex items-center gap-1.5">
-                      <Linkedin size={12} className="text-[#0A66C2]" /> LinkedIn Profile URL *
-                    </label>
-                    <input
-                      type="url"
-                      required
-                      value={linkedinUrlInput}
-                      onChange={(e) => setLinkedinUrlInput(e.target.value)}
-                      placeholder="e.g. https://www.linkedin.com/in/yourname"
-                      className="w-full px-3.5 py-2.5 text-xs bg-neutral-950 border border-neutral-800 focus:border-[#0A66C2] rounded-xl outline-none text-white font-medium transition-all"
-                    />
-                    <p className="text-[10px] text-neutral-500">
-                      Format: <code className="text-blue-400 font-mono">https://www.linkedin.com/in/yourname</code>
-                    </p>
-                  </div>
-                  {/* College / University * */}
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black uppercase text-neutral-400 tracking-wider flex items-center gap-1.5">
-                      <Building size={12} className="text-orange-500" /> College / University *
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={college}
-                      onChange={(e) => setCollege(e.target.value)}
-                      placeholder="e.g. Anurag University"
-                      className="w-full px-3.5 py-2.5 text-xs bg-neutral-950 border border-neutral-800 focus:border-orange-500 rounded-xl outline-none text-white font-bold transition-all"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    {/* Department (Optional) */}
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-black uppercase text-neutral-400 tracking-wider flex items-center gap-1.5">
-                        <GraduationCap size={12} className="text-orange-500" /> Department (Optional)
-                      </label>
-                      <input
-                        type="text"
-                        value={department}
-                        onChange={(e) => setDepartment(e.target.value)}
-                        placeholder="e.g. CSE / ECE"
-                        className="w-full px-3.5 py-2.5 text-xs bg-neutral-950 border border-neutral-800 focus:border-orange-500 rounded-xl outline-none text-white font-medium transition-all"
-                      />
+                <div className="p-3 rounded-xl bg-neutral-950 border border-neutral-800/80 text-left space-y-1">
+                  <span className="text-[10px] font-mono font-bold text-neutral-400 uppercase tracking-wider block">
+                    IMPORTED FIELDS
+                  </span>
+                  <div className="grid grid-cols-2 gap-2 text-xs text-neutral-300 font-medium pt-1">
+                    <div className="flex items-center gap-1.5 truncate">
+                      <CheckCircle size={12} className="text-emerald-400 shrink-0" />
+                      <span className="truncate">Name: {importedName}</span>
                     </div>
-
-                    {/* Year of Study (Optional) */}
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-black uppercase text-neutral-400 tracking-wider flex items-center gap-1.5">
-                        <Tag size={12} className="text-orange-500" /> Year (Optional)
-                      </label>
-                      <input
-                        type="text"
-                        value={year}
-                        onChange={(e) => setYear(e.target.value)}
-                        placeholder="e.g. 3rd Year"
-                        className="w-full px-3.5 py-2.5 text-xs bg-neutral-950 border border-neutral-800 focus:border-orange-500 rounded-xl outline-none text-white font-medium transition-all"
-                      />
+                    <div className="flex items-center gap-1.5 truncate">
+                      <CheckCircle size={12} className="text-emerald-400 shrink-0" />
+                      <span className="truncate">Profile Photo</span>
                     </div>
-                  </div>
-
-                  {/* Interests / Skills (Optional) */}
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black uppercase text-neutral-400 tracking-wider flex items-center gap-1.5">
-                      <Sparkles size={12} className="text-orange-500" /> Interests (Optional)
-                    </label>
-                    <input
-                      type="text"
-                      value={interests}
-                      onChange={(e) => setInterests(e.target.value)}
-                      placeholder="e.g. AI, Full-Stack, Robotics"
-                      className="w-full px-3.5 py-2.5 text-xs bg-neutral-950 border border-neutral-800 focus:border-orange-500 rounded-xl outline-none text-white font-medium transition-all"
-                    />
                   </div>
                 </div>
               </div>
@@ -646,8 +662,251 @@ export function ParticipantOnboarding({
               <div className="flex items-center gap-3 pt-2">
                 <button
                   type="button"
-                  disabled={saving}
                   onClick={() => setStep("identity-verification")}
+                  className="px-4 py-3 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  <ArrowLeft size={14} /> Back
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleProfileConfirmNext}
+                  className="flex-1 py-3.5 px-6 rounded-xl bg-orange-500 hover:bg-orange-600 active:scale-[0.99] text-white font-black text-xs uppercase tracking-wider transition-all shadow-lg hover:shadow-orange-500/20 cursor-pointer flex items-center justify-center gap-2 border border-orange-400/40"
+                >
+                  <span>Confirm &amp; Next</span>
+                  <CheckCircle size={16} />
+                </button>
+              </div>
+            </motion.div>
+          )}
+
+          {/* STEP 4: LINKEDIN USERNAME VERIFICATION (NEW STEP) */}
+          {step === "linkedin-username-verification" && (
+            <motion.div
+              key="step-linkedin-username-verification"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="space-y-5"
+            >
+              <div className="space-y-1.5">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase font-mono tracking-wider bg-[#0A66C2]/15 border border-[#0A66C2]/30 text-[#0A66C2]">
+                  <Linkedin size={12} /> Step 2 of 3
+                </span>
+                <h2 className="text-xl md:text-2xl font-black text-white tracking-tight">
+                  Verify Your LinkedIn Profile
+                </h2>
+                <p className="text-xs text-neutral-400 font-medium leading-relaxed">
+                  We only need your LinkedIn username once. Other participants will use this to connect with you directly.
+                </p>
+              </div>
+
+              {errorMsg && (
+                <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl text-xs font-bold flex items-center gap-2">
+                  <AlertCircle size={16} className="shrink-0" />
+                  <span>{errorMsg}</span>
+                </div>
+              )}
+
+              <div className="p-4 rounded-2xl bg-neutral-900 border border-neutral-800 space-y-4">
+                {/* Username Input Box with static prefix */}
+                <div className="space-y-1.5 text-left">
+                  <label className="text-[10px] font-black uppercase text-neutral-400 tracking-wider flex items-center gap-1.5">
+                    <Linkedin size={12} className="text-[#0A66C2]" /> LinkedIn Username *
+                  </label>
+                  <div className="flex items-center rounded-xl bg-neutral-950 border border-neutral-800 focus-within:border-[#0A66C2] transition-all overflow-hidden">
+                    <span className="px-3 py-2.5 bg-neutral-900/80 text-neutral-400 text-xs font-mono border-r border-neutral-800 shrink-0 select-none">
+                      linkedin.com/in/
+                    </span>
+                    <input
+                      type="text"
+                      required
+                      value={linkedinUsername}
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        const slug = extractLinkedinUsername(raw);
+                        setLinkedinUsername(slug);
+                        setIsProfileConfirmed(false);
+                        if (slug) {
+                          const res = validateLinkedinUsername(slug);
+                          if (!res.valid) {
+                            setErrorMsg(res.error || "Invalid username format.");
+                          } else {
+                            setErrorMsg("");
+                          }
+                        } else {
+                          setErrorMsg("");
+                        }
+                      }}
+                      placeholder="rithesh-jampana"
+                      className="w-full px-3 py-2.5 text-xs bg-transparent text-white font-mono outline-none"
+                    />
+                  </div>
+                  <p className="text-[10px] text-neutral-500">
+                    Type or paste your profile username slug (e.g. <code className="text-blue-400 font-mono">rithesh-jampana</code>).
+                  </p>
+                </div>
+
+                {/* Live Realtime URL Preview Box */}
+                <div className="p-3 rounded-xl bg-neutral-950 border border-neutral-800 space-y-1 text-left">
+                  <span className="text-[9px] font-mono font-bold uppercase tracking-wider text-neutral-500 block">
+                    PREVIEW PROFILE URL
+                  </span>
+                  <code className="text-xs text-blue-400 font-mono break-all block">
+                    {`https://www.linkedin.com/in/${extractLinkedinUsername(linkedinUsername) || "username"}/`}
+                  </code>
+                </div>
+
+                {/* Preview Button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const slug = extractLinkedinUsername(linkedinUsername);
+                    if (slug) {
+                      window.open(`https://www.linkedin.com/in/${slug}`, "_blank", "noopener,noreferrer");
+                    } else {
+                      setErrorMsg("Please enter a LinkedIn username first to preview.");
+                    }
+                  }}
+                  className="w-full py-2.5 px-4 rounded-xl bg-neutral-950 hover:bg-neutral-800 text-xs font-bold text-blue-400 border border-neutral-800 hover:border-blue-500/40 flex items-center justify-center gap-2 cursor-pointer transition-all"
+                >
+                  <ExternalLink size={14} />
+                  <span>🔗 Preview My LinkedIn Profile</span>
+                </button>
+
+                {/* Confirmation Checkbox */}
+                <label className="flex items-center gap-3 p-3 rounded-xl bg-neutral-950 border border-neutral-800 cursor-pointer text-xs text-neutral-200 font-medium select-none text-left hover:border-neutral-700 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={isProfileConfirmed}
+                    onChange={(e) => setIsProfileConfirmed(e.target.checked)}
+                    className="w-4 h-4 rounded border-neutral-700 bg-neutral-900 text-orange-500 focus:ring-0 cursor-pointer accent-orange-500"
+                  />
+                  <span>This opens my correct LinkedIn profile.</span>
+                </label>
+              </div>
+
+              {/* Navigation Buttons */}
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setStep("profile-confirmation")}
+                  className="px-4 py-3 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  <ArrowLeft size={14} /> Back
+                </button>
+
+                <button
+                  type="button"
+                  disabled={!validateLinkedinUsername(linkedinUsername).valid || !isProfileConfirmed}
+                  onClick={() => {
+                    setErrorMsg("");
+                    setStep("event-details");
+                  }}
+                  className="flex-1 py-3.5 px-6 rounded-xl bg-orange-500 hover:bg-orange-600 active:scale-[0.99] text-white font-black text-xs uppercase tracking-wider transition-all shadow-lg hover:shadow-orange-500/20 cursor-pointer flex items-center justify-center gap-2 border border-orange-400/40 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <span>Continue</span>
+                  <CheckCircle size={16} />
+                </button>
+              </div>
+            </motion.div>
+          )}
+
+          {/* STEP 5: ACADEMIC & EVENT DETAILS */}
+          {step === "event-details" && (
+            <motion.div
+              key="step-event-details"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="space-y-5"
+            >
+              <div className="space-y-1">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase font-mono tracking-wider bg-orange-500/15 border border-orange-500/30 text-orange-400">
+                  <Building size={12} /> Final Step
+                </span>
+                <h2 className="text-xl md:text-2xl font-black text-white tracking-tight">
+                  Academic &amp; Event Details
+                </h2>
+                <p className="text-xs text-neutral-400 font-medium">
+                  Provide your institution details to complete your registration.
+                </p>
+              </div>
+
+              {errorMsg && (
+                <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl text-xs font-bold flex items-center gap-2">
+                  <AlertCircle size={16} className="shrink-0" />
+                  <span>{errorMsg}</span>
+                </div>
+              )}
+
+              <div className="p-4 rounded-2xl bg-neutral-900 border border-neutral-800 space-y-3 text-left">
+                {/* College / University * */}
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase text-neutral-400 tracking-wider flex items-center gap-1.5">
+                    <Building size={12} className="text-orange-500" /> College / University *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={college}
+                    onChange={(e) => setCollege(e.target.value)}
+                    placeholder="e.g. Anurag University"
+                    className="w-full px-3.5 py-2.5 text-xs bg-neutral-950 border border-neutral-800 focus:border-orange-500 rounded-xl outline-none text-white font-bold transition-all"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  {/* Department (Optional) */}
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black uppercase text-neutral-400 tracking-wider flex items-center gap-1.5">
+                      <GraduationCap size={12} className="text-orange-500" /> Department (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      value={department}
+                      onChange={(e) => setDepartment(e.target.value)}
+                      placeholder="e.g. CSE / ECE"
+                      className="w-full px-3.5 py-2.5 text-xs bg-neutral-950 border border-neutral-800 focus:border-orange-500 rounded-xl outline-none text-white font-medium transition-all"
+                    />
+                  </div>
+
+                  {/* Year of Study (Optional) */}
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black uppercase text-neutral-400 tracking-wider flex items-center gap-1.5">
+                      <Tag size={12} className="text-orange-500" /> Year (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      value={year}
+                      onChange={(e) => setYear(e.target.value)}
+                      placeholder="e.g. 3rd Year"
+                      className="w-full px-3.5 py-2.5 text-xs bg-neutral-950 border border-neutral-800 focus:border-orange-500 rounded-xl outline-none text-white font-medium transition-all"
+                    />
+                  </div>
+                </div>
+
+                {/* Interests / Skills (Optional) */}
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase text-neutral-400 tracking-wider flex items-center gap-1.5">
+                    <Sparkles size={12} className="text-orange-500" /> Interests (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={interests}
+                    onChange={(e) => setInterests(e.target.value)}
+                    placeholder="e.g. AI, Full-Stack, Robotics"
+                    className="w-full px-3.5 py-2.5 text-xs bg-neutral-950 border border-neutral-800 focus:border-orange-500 rounded-xl outline-none text-white font-medium transition-all"
+                  />
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => setStep("linkedin-username-verification")}
                   className="px-4 py-3 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                 >
                   <ArrowLeft size={14} /> Back
@@ -657,17 +916,17 @@ export function ParticipantOnboarding({
                   type="button"
                   disabled={saving}
                   onClick={handleConfirmProfile}
-                  className="flex-1 py-3 px-6 rounded-xl bg-orange-500 hover:bg-orange-600 active:scale-[0.99] text-white font-black text-xs uppercase tracking-wider transition-all shadow-lg hover:shadow-orange-500/20 cursor-pointer flex items-center justify-center gap-2 border border-orange-400/40 disabled:opacity-50"
+                  className="flex-1 py-3.5 px-6 rounded-xl bg-orange-500 hover:bg-orange-600 active:scale-[0.99] text-white font-black text-xs uppercase tracking-wider transition-all shadow-lg hover:shadow-orange-500/20 cursor-pointer flex items-center justify-center gap-2 border border-orange-400/40 disabled:opacity-50"
                 >
                   {saving ? (
                     <>
                       <Loader2 size={16} className="animate-spin" />
-                      <span>Creating Participant...</span>
+                      <span>Joining Event...</span>
                     </>
                   ) : (
                     <>
                       <CheckCircle size={16} />
-                      <span>Confirm &amp; Continue</span>
+                      <span>Confirm &amp; Join Event</span>
                     </>
                   )}
                 </button>
@@ -728,3 +987,4 @@ export function ParticipantOnboarding({
     </div>
   );
 }
+

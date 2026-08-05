@@ -19,7 +19,7 @@ import {
 import { collection, onSnapshot, query, orderBy } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { EventItem } from "./PublicEventPage";
-import { Participant } from "./ParticipantOnboarding";
+import { Participant, getLinkedinProfileUrl } from "./ParticipantOnboarding";
 
 interface EventRoomProps {
   event: EventItem;
@@ -122,12 +122,9 @@ export function EventRoom({
     setTimeout(() => setCopiedLink(false), 2000);
   };
 
-  const handleConnectClick = (linkedinUrl?: string) => {
-    if (!linkedinUrl) return;
-    let url = linkedinUrl.trim();
-    if (!url.startsWith("http://") && !url.startsWith("https://")) {
-      url = `https://${url}`;
-    }
+  const handleConnectClick = (participant: Participant) => {
+    const url = getLinkedinProfileUrl(participant);
+    if (!url) return;
     window.open(url, "_blank", "noopener,noreferrer");
   };
 
@@ -375,7 +372,7 @@ export function EventRoom({
                   {/* Connect Button */}
                   <button
                     type="button"
-                    onClick={() => handleConnectClick(p.linkedinUrl)}
+                    onClick={() => handleConnectClick(p)}
                     className="w-full py-1.5 px-2 rounded-lg bg-[#0A66C2] hover:bg-[#084e96] active:scale-[0.98] text-white font-black text-[10px] uppercase tracking-wider transition-all shadow flex items-center justify-center gap-1 cursor-pointer border border-blue-400/30"
                   >
                     <Linkedin size={12} />
