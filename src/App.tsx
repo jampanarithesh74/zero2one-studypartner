@@ -5232,63 +5232,67 @@ export default function App() {
           </motion.div>
         ) : (
           <div key="content" className="w-full">
-            {viewState === "year-selection" && (
-              <motion.div key="year" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                {renderYearSelection()}
-              </motion.div>
-            )}
-            {viewState === "dept-selection" && (
-              <motion.div key="dept" initial={{ opacity: 0, x: 50 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -50 }}>
-                {renderDeptSelection()}
-              </motion.div>
-            )}
-            {viewState === "sem-selection" && (
-              <motion.div key="sem" initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}>
-                {userProfile && academicMode === null ? renderAcademicModeSelection() : renderSemSelection()}
-              </motion.div>
-            )}
-            {viewState === "choice-selection" && (
-              <motion.div key="choice" initial={{ opacity: 0, y: 50 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-                {renderChoiceSelection()}
-              </motion.div>
-            )}
-            {viewState === "syllabus-view" && (
-              <motion.div key="view" initial={{ opacity: 0, y: 100 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-                {renderSyllabusView()}
-              </motion.div>
-            )}
-            {viewState === "resources-view" && (
-              <motion.div key="resources" initial={{ opacity: 0, y: 50 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-                {renderResourcesView()}
-              </motion.div>
-            )}
-            {viewState === "syllabus-copy-view" && (
-              <motion.div key="syllabus-copy" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}>
-                {renderSyllabusCopyView()}
-              </motion.div>
-            )}
-            {viewState === "dashboard" && (
-              <motion.div key="dashboard" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                {userProfile && academicMode === null ? renderAcademicModeSelection() : renderDashboard()}
-              </motion.div>
-            )}
-            {viewState === "profile-page" && (
-              <motion.div key="profile" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                {renderProfilePage()}
-              </motion.div>
-            )}
-            {viewState === "tools-page" && (
-              <motion.div key="tools" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                <ToolsModule 
-                  userProfile={userProfile}
-                  navigate={navigate}
-                  showToast={showToast}
-                  activeSubView={toolsSubView}
-                  setActiveSubView={setToolsSubView}
-                  setViewState={setViewState}
-                  getFallbackSyllabusList={getFallbackSyllabusList}
-                />
-              </motion.div>
+            {!location.pathname.startsWith("/events") && (
+              <>
+                {viewState === "year-selection" && (
+                  <motion.div key="year" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                    {renderYearSelection()}
+                  </motion.div>
+                )}
+                {viewState === "dept-selection" && (
+                  <motion.div key="dept" initial={{ opacity: 0, x: 50 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -50 }}>
+                    {renderDeptSelection()}
+                  </motion.div>
+                )}
+                {viewState === "sem-selection" && (
+                  <motion.div key="sem" initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}>
+                    {userProfile && academicMode === null ? renderAcademicModeSelection() : renderSemSelection()}
+                  </motion.div>
+                )}
+                {viewState === "choice-selection" && (
+                  <motion.div key="choice" initial={{ opacity: 0, y: 50 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+                    {renderChoiceSelection()}
+                  </motion.div>
+                )}
+                {viewState === "syllabus-view" && (
+                  <motion.div key="view" initial={{ opacity: 0, y: 100 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+                    {renderSyllabusView()}
+                  </motion.div>
+                )}
+                {viewState === "resources-view" && (
+                  <motion.div key="resources" initial={{ opacity: 0, y: 50 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+                    {renderResourcesView()}
+                  </motion.div>
+                )}
+                {viewState === "syllabus-copy-view" && (
+                  <motion.div key="syllabus-copy" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}>
+                    {renderSyllabusCopyView()}
+                  </motion.div>
+                )}
+                {viewState === "dashboard" && (
+                  <motion.div key="dashboard" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                    {userProfile && academicMode === null ? renderAcademicModeSelection() : renderDashboard()}
+                  </motion.div>
+                )}
+                {viewState === "profile-page" && (
+                  <motion.div key="profile" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                    {renderProfilePage()}
+                  </motion.div>
+                )}
+                {viewState === "tools-page" && (
+                  <motion.div key="tools" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                    <ToolsModule 
+                      userProfile={userProfile}
+                      navigate={navigate}
+                      showToast={showToast}
+                      activeSubView={toolsSubView}
+                      setActiveSubView={setToolsSubView}
+                      setViewState={setViewState}
+                      getFallbackSyllabusList={getFallbackSyllabusList}
+                    />
+                  </motion.div>
+                )}
+              </>
             )}
             {location.pathname.startsWith("/events") && (
               <Routes>

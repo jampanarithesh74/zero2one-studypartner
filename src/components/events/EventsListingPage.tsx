@@ -155,6 +155,36 @@ export function EventsListingPage({ currentUserEmail, currentUserId }: EventsLis
     <div className="min-h-screen bg-[#0a0a0a] text-white font-sans selection:bg-orange-500 selection:text-white pb-20 pt-4 px-4 sm:px-6">
       <div className="max-w-5xl mx-auto space-y-6">
         
+        {/* ZERO2ONE Hero & Notes Section */}
+        <section className="relative overflow-hidden rounded-3xl bg-neutral-900/90 border border-neutral-800 p-6 md:p-8 text-left shadow-2xl">
+          <div className="absolute top-0 right-0 w-72 h-72 bg-orange-500/10 blur-[90px] rounded-full pointer-events-none" />
+          <div className="relative z-10 space-y-4">
+            <div className="flex items-center gap-3">
+              <img 
+                src="https://raw.githubusercontent.com/jampanapadmaja/ZERO2ONE/main/logo.png" 
+                alt="ZERO2ONE Logo" 
+                className="w-10 h-10 rounded-xl object-contain shadow-lg shadow-orange-500/20" 
+                onError={(e) => { (e.currentTarget as HTMLImageElement).src = "https://img.icons8.com/color/96/graduation-cap.png"; }} 
+              />
+              <div>
+                <h1 className="text-2xl md:text-3xl font-black tracking-tighter text-white uppercase">
+                  ZERO<span className="text-orange-500 italic">2</span>ONE
+                </h1>
+                <p className="text-[10px] md:text-xs text-neutral-400 font-mono font-bold tracking-wider uppercase">
+                  Official Anurag University Student Platform
+                </p>
+              </div>
+            </div>
+
+            {/* Notes Section Quote */}
+            <div className="relative pl-4 border-l-2 border-orange-500/50 py-1 bg-white/[0.02] rounded-r-2xl pr-4">
+              <p className="text-xs md:text-sm text-neutral-300 font-light italic leading-relaxed">
+                "Excellence is not a skill, it's an attitude. From zero knowledge to one master, we're with you."
+              </p>
+            </div>
+          </div>
+        </section>
+
         {/* Header Bar */}
         <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-2xl bg-neutral-900/90 border border-neutral-800 backdrop-blur-md shadow-xl">
           <div className="space-y-1 text-left">
