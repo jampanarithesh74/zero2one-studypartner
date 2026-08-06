@@ -10,9 +10,10 @@ import { EventRoom } from "../EventRoom";
 interface EventRoomPageProps {
   currentUserEmail?: string | null;
   currentUserId?: string | null;
+  isAdmin?: boolean;
 }
 
-export function EventRoomPage({ currentUserEmail, currentUserId }: EventRoomPageProps) {
+export function EventRoomPage({ currentUserEmail, currentUserId, isAdmin = false }: EventRoomPageProps) {
   const { eventId } = useParams<{ eventId: string }>();
   const navigate = useNavigate();
 
@@ -154,6 +155,7 @@ export function EventRoomPage({ currentUserEmail, currentUserId }: EventRoomPage
     <EventRoom
       event={event}
       currentParticipant={currentParticipant}
+      isAdmin={isAdmin}
       onBackToEvent={() => navigate(`/events/${eventId}`)}
       onNavigateHome={() => navigate("/")}
     />

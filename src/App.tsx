@@ -5306,7 +5306,7 @@ export default function App() {
                 <Route path="/events/:eventId" element={<PublicEventPage onNavigateHome={() => navigate("/events")} />} />
                 <Route path="/events/:eventId/join" element={<ParticipantJoinPage />} />
                 <Route path="/events/:eventId/onboarding" element={<ParticipantOnboardingPage />} />
-                <Route path="/events/:eventId/room" element={<EventRoomPage currentUserEmail={user?.email} currentUserId={user?.uid} />} />
+                <Route path="/events/:eventId/room" element={<EventRoomPage currentUserEmail={user?.email} currentUserId={user?.uid} isAdmin={isAdmin} />} />
                 <Route path="/events/:eventId/participant/:participantId" element={<ParticipantProfilePage />} />
 
                 {/* Protect Admin Event Routes */}

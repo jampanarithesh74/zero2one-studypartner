@@ -32,15 +32,16 @@ import { db } from "../lib/firebase";
 export interface Participant {
   id?: string;
   name: string;
-  photo: string;
+  photo?: string;
   linkedinUsername?: string;
   linkedinUrl?: string;
   linkedinSub?: string;
   email?: string;
-  college: string;
+  college?: string;
   department?: string;
   year?: string;
   interests?: string;
+  roomType?: "linkedin" | "normal";
   joinedAt?: any;
   lastSeen?: any;
   online: boolean;
