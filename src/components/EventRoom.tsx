@@ -9,6 +9,7 @@ interface EventRoomProps {
   event: EventItem;
   currentParticipant: Participant & { id: string };
   isAdmin?: boolean;
+  currentUserEmail?: string | null;
   onBackToEvent: () => void;
   onNavigateHome: () => void;
 }
@@ -19,6 +20,7 @@ export function EventRoom({
   event,
   currentParticipant,
   isAdmin = false,
+  currentUserEmail,
   onBackToEvent,
   onNavigateHome,
 }: EventRoomProps) {
@@ -135,6 +137,7 @@ export function EventRoom({
       setSelectedDept={setSelectedDept}
       availableDepts={availableDepts}
       isAdmin={isAdmin}
+      currentUserEmail={currentUserEmail}
       copied={copiedLink}
       onBackToEvent={onBackToEvent}
       onNavigateHome={onNavigateHome}

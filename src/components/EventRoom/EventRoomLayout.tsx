@@ -6,6 +6,7 @@ import { RoomHeader } from "./RoomHeader";
 import { ParticipantsPanel } from "./ParticipantsPanel";
 import { LiveRoomPanel } from "./LiveRoomPanel";
 import { ChatPanel } from "./ChatPanel";
+import { AskQuestionModal } from "./AskQuestionModal";
 
 interface EventRoomLayoutProps {
   event: EventItem;
@@ -18,6 +19,7 @@ interface EventRoomLayoutProps {
   setSelectedDept: (dept: string) => void;
   availableDepts: string[];
   isAdmin?: boolean;
+  currentUserEmail?: string | null;
   copied: boolean;
   onBackToEvent: () => void;
   onNavigateHome: () => void;
@@ -36,6 +38,7 @@ export function EventRoomLayout({
   setSelectedDept,
   availableDepts,
   isAdmin = false,
+  currentUserEmail,
   copied,
   onBackToEvent,
   onNavigateHome,
@@ -43,6 +46,7 @@ export function EventRoomLayout({
   onConnectClick,
 }: EventRoomLayoutProps) {
   const [activeTab, setActiveTab] = useState<"participants" | "live" | "chat">("live");
+  const [isAskModalOpen, setIsAskModalOpen] = useState<boolean>(false);
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col font-sans selection:bg-orange-500 selection:text-white">
@@ -51,6 +55,7 @@ export function EventRoomLayout({
         event={event}
         participantCount={participants.length}
         isAdmin={isAdmin}
+        onOpenAskModal={() => setIsAskModalOpen(true)}
         onBackToEvent={onBackToEvent}
         onNavigateHome={onNavigateHome}
         onCopyShareLink={onCopyShareLink}
@@ -123,7 +128,12 @@ export function EventRoomLayout({
 
           {/* Center Panel: Live Room (50% = col-span-6) */}
           <div className="lg:col-span-6 h-full">
-            <LiveRoomPanel event={event} />
+            <LiveRoomPanel
+              event={event}
+              currentParticipant={currentParticipant}
+              isAdmin={isAdmin}
+              onOpenAskModal={() => setIsAskModalOpen(true)}
+            />
           </div>
 
           {/* Right Panel: Chat Room (25% = col-span-3) */}
@@ -149,11 +159,28 @@ export function EventRoomLayout({
             />
           )}
 
-          {activeTab === "live" && <LiveRoomPanel event={event} />}
+          {activeTab === "live" && (
+            <LiveRoomPanel
+              event={event}
+              currentParticipant={currentParticipant}
+              isAdmin={isAdmin}
+              onOpenAskModal={() => setIsAskModalOpen(true)}
+            />
+          )}
 
           {activeTab === "chat" && <ChatPanel event={event} />}
         </div>
       </main>
+
+      {/* Admin Ask Question Modal */}
+      {isAdmin && (
+        <AskQuestionModal
+          isOpen={isAskModalOpen}
+          onClose={() => setIsAskModalOpen(false)}
+          eventId={event.id}
+          currentUserEmail={currentUserEmail}
+        />
+      )}
     </div>
   );
 }

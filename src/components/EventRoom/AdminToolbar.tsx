@@ -3,14 +3,19 @@ import { Users, HelpCircle, Presentation, Sparkles } from "lucide-react";
 
 interface AdminToolbarProps {
   isAdmin?: boolean;
+  onOpenAskModal?: () => void;
 }
 
-export function AdminToolbar({ isAdmin = false }: AdminToolbarProps) {
+export function AdminToolbar({ isAdmin = false, onOpenAskModal }: AdminToolbarProps) {
   const [toastMsg, setToastMsg] = useState<string>("");
 
   if (!isAdmin) return null;
 
   const handleAction = (label: string) => {
+    if (label === "Ask Question" && onOpenAskModal) {
+      onOpenAskModal();
+      return;
+    }
     setToastMsg(`${label}: Coming Soon`);
     setTimeout(() => {
       setToastMsg("");

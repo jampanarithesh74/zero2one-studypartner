@@ -156,6 +156,7 @@ export function EventRoomPage({ currentUserEmail, currentUserId, isAdmin = false
       event={event}
       currentParticipant={currentParticipant}
       isAdmin={isAdmin}
+      currentUserEmail={currentUserEmail}
       onBackToEvent={() => navigate(`/events/${eventId}`)}
       onNavigateHome={() => navigate("/")}
     />

@@ -6,6 +6,7 @@ interface RoomHeaderProps {
   event: EventItem;
   participantCount: number;
   isAdmin?: boolean;
+  onOpenAskModal?: () => void;
   onBackToEvent: () => void;
   onNavigateHome: () => void;
   onCopyShareLink: () => void;
@@ -16,6 +17,7 @@ export function RoomHeader({
   event,
   participantCount,
   isAdmin = false,
+  onOpenAskModal,
   onBackToEvent,
   onNavigateHome,
   onCopyShareLink,
@@ -85,7 +87,7 @@ export function RoomHeader({
           </button>
 
           {/* Admin Toolbar (Only rendered if admin) */}
-          <AdminToolbar isAdmin={isAdmin} />
+          <AdminToolbar isAdmin={isAdmin} onOpenAskModal={onOpenAskModal} />
         </div>
       </div>
 

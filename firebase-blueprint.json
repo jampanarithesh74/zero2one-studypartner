@@ -99,6 +99,32 @@
         "batchYearMapping": { "type": "object" }
       },
       "required": ["batchYearMapping"]
+    },
+    "ActiveQuestion": {
+      "title": "ActiveQuestion",
+      "description": "Active real-time event question published by admin",
+      "type": "object",
+      "properties": {
+        "question": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "isActive": { "type": "boolean" },
+        "questionId": { "type": "string" }
+      },
+      "required": ["question", "createdBy", "isActive", "questionId"]
+    },
+    "LiveAnswer": {
+      "title": "LiveAnswer",
+      "description": "Participant response to active event question",
+      "type": "object",
+      "properties": {
+        "participantId": { "type": "string" },
+        "participantName": { "type": "string" },
+        "answer": { "type": "string" },
+        "submittedAt": { "type": "string" },
+        "questionId": { "type": "string" }
+      },
+      "required": ["participantId", "participantName", "answer", "questionId"]
     }
   },
   "firestore": {
@@ -125,6 +151,14 @@
     "notifications/{notificationId}": {
       "schema": "Notification",
       "description": "Global platforms updates and admin-published notifications"
+    },
+    "events/{eventId}/liveRoom/activeQuestion": {
+      "schema": "ActiveQuestion",
+      "description": "Active real-time question for live event room"
+    },
+    "events/{eventId}/liveAnswers/{answerId}": {
+      "schema": "LiveAnswer",
+      "description": "Participant live responses to active questions"
     }
   }
 }

@@ -7,13 +7,15 @@ interface ParticipantsPanelProps {
   event: EventItem;
   participants: (Participant & { id: string })[];
   filteredParticipants: (Participant & { id: string })[];
-  currentParticipant: Participant & { id: string };
+  currentParticipant?: (Participant & { id: string }) | null;
   searchQuery: string;
   setSearchQuery: (q: string) => void;
   selectedDept: string;
   setSelectedDept: (dept: string) => void;
   availableDepts: string[];
-  onConnectClick: (p: Participant & { id: string }) => void;
+  onConnectClick?: (p: Participant & { id: string }) => void;
+  showConnect?: boolean;
+  title?: string;
 }
 
 export function ParticipantsPanel({
@@ -27,6 +29,8 @@ export function ParticipantsPanel({
   setSelectedDept,
   availableDepts,
   onConnectClick,
+  showConnect = true,
+  title = "Participants",
 }: ParticipantsPanelProps) {
   const isNormalRoom = event.roomType === "normal";
 
@@ -36,7 +40,7 @@ export function ParticipantsPanel({
       <div className="p-3.5 border-b border-neutral-800 bg-neutral-900/80 space-y-2.5">
         <div className="flex items-center justify-between">
           <h2 className="text-xs font-black uppercase tracking-wider text-white flex items-center gap-2">
-            <span>Participants</span>
+            <span>{title}</span>
             <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-orange-500/20 text-orange-400 border border-orange-500/30">
               {participants.length}
             </span>
@@ -103,7 +107,7 @@ export function ParticipantsPanel({
           </div>
         ) : (
           filteredParticipants.map((p) => {
-            const isYou = p.id === currentParticipant.id;
+            const isYou = Boolean(currentParticipant?.id && p.id === currentParticipant.id);
             const isNormalParticipant = isNormalRoom || p.roomType === "normal";
 
             return (
@@ -176,7 +180,7 @@ export function ParticipantsPanel({
                 )}
 
                 {/* Connect Button (LinkedIn Only) */}
-                {!isNormalParticipant && (
+                {showConnect && !isNormalParticipant && onConnectClick && (
                   <button
                     type="button"
                     onClick={() => onConnectClick(p)}

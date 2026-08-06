@@ -1,4 +1,5 @@
 import { useState, useEffect, FormEvent } from "react";
+import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
 import { QRCodeCanvas } from "qrcode.react";
 import { 
@@ -20,7 +21,8 @@ import {
   Download,
   Copy,
   Check,
-  QrCode
+  QrCode,
+  Radio
 } from "lucide-react";
 import { 
   collection, 
@@ -60,6 +62,7 @@ interface EventsModuleProps {
 }
 
 export function EventsModule({ currentUserEmail, currentUserId, isAdmin = false }: EventsModuleProps) {
+  const navigate = useNavigate();
   const [events, setEvents] = useState<EventItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
@@ -548,6 +551,29 @@ export function EventsModule({ currentUserEmail, currentUserId, isAdmin = false 
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <button
                         type="button"
+                        onClick={() => {
+                          const sessionKey = `z2o_participant_${event.id}`;
+                          if (!localStorage.getItem(sessionKey)) {
+                            const adminParticipant = {
+                              id: `admin_${currentUserId || Date.now()}`,
+                              name: currentUserEmail ? `${currentUserEmail.split("@")[0]} (Host Admin)` : "Host Admin",
+                              college: "ZERO2ONE Host",
+                              department: "ADMIN",
+                              year: "Host",
+                              joinedAt: new Date().toISOString(),
+                              roomType: event.roomType || "normal",
+                            };
+                            localStorage.setItem(sessionKey, JSON.stringify(adminParticipant));
+                          }
+                          navigate(`/events/${event.id}/admin`);
+                        }}
+                        className="px-2.5 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 hover:text-emerald-300 text-xs font-bold transition-all border border-emerald-500/30 flex items-center gap-1 cursor-pointer"
+                        title="Enter Room & Manage Live Questions"
+                      >
+                        <Radio size={12} /> Manage Event
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => setViewingQrEvent(event)}
                         className="px-2.5 py-1.5 rounded-lg bg-orange-500/15 hover:bg-orange-500/25 text-orange-400 hover:text-orange-300 text-xs font-bold transition-all border border-orange-500/30 flex items-center gap-1 cursor-pointer"
                         title="View / Download QR Code"
@@ -794,7 +820,7 @@ export function EventsModule({ currentUserEmail, currentUserId, isAdmin = false 
                       onClick={() => {
                         setIsModalOpen(false);
                         setCreatedSuccessEvent(null);
-                        window.location.href = `/events/${createdSuccessEvent.id}`;
+                        navigate(`/events/${createdSuccessEvent.id}`);
                       }}
                       className="w-full py-3 px-4 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 hover:text-white font-bold text-xs transition-all flex items-center justify-center gap-2 border border-neutral-700 cursor-pointer"
                     >
