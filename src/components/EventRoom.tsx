@@ -91,13 +91,17 @@ export function EventRoom({
     return Array.from(set);
   }, [participants]);
 
+  const isNormalRoom = event.roomType === "normal";
+
   // Realtime search & department filtering
   const filteredParticipants = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
 
     return participants.filter((p) => {
-      // 1. Department Filter
-      if (selectedDept !== "All") {
+      const isNormalParticipant = isNormalRoom || p.roomType === "normal";
+
+      // 1. Department Filter (Only for LinkedIn rooms)
+      if (!isNormalRoom && selectedDept !== "All") {
         const deptUpper = (p.department || "").toUpperCase();
         if (!deptUpper.includes(selectedDept)) {
           return false;
@@ -108,13 +112,17 @@ export function EventRoom({
       if (!q) return true;
 
       const nameMatch = p.name?.toLowerCase().includes(q);
+      if (isNormalParticipant) {
+        return nameMatch;
+      }
+
       const collegeMatch = p.college?.toLowerCase().includes(q);
       const deptMatch = p.department?.toLowerCase().includes(q);
       const yearMatch = p.year?.toLowerCase().includes(q);
 
       return nameMatch || collegeMatch || deptMatch || yearMatch;
     });
-  }, [participants, searchQuery, selectedDept]);
+  }, [participants, searchQuery, selectedDept, isNormalRoom]);
 
   const handleCopyShareLink = () => {
     navigator.clipboard.writeText(window.location.href);
@@ -211,7 +219,7 @@ export function EventRoom({
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search by name, college, department..."
+                placeholder={isNormalRoom ? "Search by participant name..." : "Search by name, college, department..."}
                 className="w-full pl-9 pr-8 py-2.5 text-xs bg-neutral-900 border border-neutral-800 hover:border-neutral-700 focus:border-orange-500 rounded-xl outline-none text-white font-medium transition-all placeholder:text-neutral-500"
               />
               {searchQuery && (
@@ -225,29 +233,31 @@ export function EventRoom({
               )}
             </div>
 
-            {/* Department Filter Chips */}
-            <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pb-1 pt-0.5 text-left">
-              <span className="text-[10px] font-mono font-bold text-neutral-500 uppercase shrink-0 flex items-center gap-1 mr-1">
-                <Filter size={11} /> Filter:
-              </span>
-              {availableDepts.map((dept) => {
-                const isActive = selectedDept === dept;
-                return (
-                  <button
-                    key={dept}
-                    type="button"
-                    onClick={() => setSelectedDept(dept)}
-                    className={`px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold transition-all shrink-0 cursor-pointer border ${
-                      isActive
-                        ? "bg-orange-500 text-white border-orange-400 shadow-md"
-                        : "bg-neutral-900 text-neutral-400 border-neutral-800 hover:border-neutral-700 hover:text-neutral-200"
-                    }`}
-                  >
-                    {dept}
-                  </button>
-                );
-              })}
-            </div>
+            {/* Department Filter Chips (Only for LinkedIn rooms) */}
+            {!isNormalRoom && (
+              <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pb-1 pt-0.5 text-left">
+                <span className="text-[10px] font-mono font-bold text-neutral-500 uppercase shrink-0 flex items-center gap-1 mr-1">
+                  <Filter size={11} /> Filter:
+                </span>
+                {availableDepts.map((dept) => {
+                  const isActive = selectedDept === dept;
+                  return (
+                    <button
+                      key={dept}
+                      type="button"
+                      onClick={() => setSelectedDept(dept)}
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold transition-all shrink-0 cursor-pointer border ${
+                        isActive
+                          ? "bg-orange-500 text-white border-orange-400 shadow-md"
+                          : "bg-neutral-900 text-neutral-400 border-neutral-800 hover:border-neutral-700 hover:text-neutral-200"
+                      }`}
+                    >
+                      {dept}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
 
@@ -305,6 +315,7 @@ export function EventRoom({
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2 sm:gap-2.5">
             {filteredParticipants.map((p) => {
               const isYou = p.id === currentParticipant.id;
+              const isNormalParticipant = isNormalRoom || p.roomType === "normal";
 
               return (
                 <motion.div
@@ -316,12 +327,16 @@ export function EventRoom({
                     isYou ? "border-orange-500/60 bg-orange-500/5" : "border-neutral-800/90"
                   }`}
                 >
-                  {/* Top Row: Circular Photo (40-48px) + Green Online Indicator + Name */}
+                  {/* Top Row: Circular Avatar Placeholder / Photo + Green Online Indicator + Name */}
                   <div className="flex items-center gap-2 text-left">
                     {/* Avatar Container */}
                     <div className="relative shrink-0">
                       <img
-                        src={p.photo || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(p.name)}`}
+                        src={
+                          isNormalParticipant
+                            ? `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(p.name)}`
+                            : p.photo || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(p.name)}`
+                        }
                         alt={p.name}
                         loading="lazy"
                         className="w-10 h-10 sm:w-11 sm:h-11 rounded-full object-cover border border-neutral-700 shadow-sm"
@@ -336,7 +351,7 @@ export function EventRoom({
                       />
                     </div>
 
-                    {/* Name & Badge */}
+                    {/* Name & Status */}
                     <div className="min-w-0 flex-1 text-left leading-tight">
                       <div className="flex items-center gap-1">
                         <h3 className="text-xs font-black text-white truncate group-hover:text-orange-400 transition-colors">
@@ -349,36 +364,47 @@ export function EventRoom({
                         )}
                       </div>
                       
-                      {/* Department + Year */}
-                      {(p.department || p.year) && (
-                        <p className="text-[10px] font-medium text-neutral-400 truncate mt-0.5 flex items-center gap-1">
-                          <GraduationCap size={10} className="shrink-0 text-neutral-500" />
-                          <span className="truncate">
-                            {[p.department, p.year].filter(Boolean).join(" • ")}
-                          </span>
+                      {/* Status / Details */}
+                      {isNormalParticipant ? (
+                        <p className="text-[9px] font-mono font-bold text-emerald-400 truncate mt-0.5 flex items-center gap-1 uppercase tracking-wider">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                          ONLINE
                         </p>
+                      ) : (
+                        (p.department || p.year) && (
+                          <p className="text-[10px] font-medium text-neutral-400 truncate mt-0.5 flex items-center gap-1">
+                            <GraduationCap size={10} className="shrink-0 text-neutral-500" />
+                            <span className="truncate">
+                              {[p.department, p.year].filter(Boolean).join(" • ")}
+                            </span>
+                          </p>
+                        )
                       )}
                     </div>
                   </div>
 
-                  {/* College Name */}
-                  <div className="text-left min-w-0">
-                    <p className="text-[10px] font-bold text-neutral-400 flex items-center gap-1 truncate">
-                      <Building size={10} className="shrink-0 text-orange-500/80" />
-                      <span className="truncate">{p.college}</span>
-                    </p>
-                  </div>
+                  {/* College Name - Only for LinkedIn participants */}
+                  {!isNormalParticipant && p.college && (
+                    <div className="text-left min-w-0">
+                      <p className="text-[10px] font-bold text-neutral-400 flex items-center gap-1 truncate">
+                        <Building size={10} className="shrink-0 text-orange-500/80" />
+                        <span className="truncate">{p.college}</span>
+                      </p>
+                    </div>
+                  )}
 
-                  {/* Connect Button */}
-                  <button
-                    type="button"
-                    onClick={() => handleConnectClick(p)}
-                    className="w-full py-1.5 px-2 rounded-lg bg-[#0A66C2] hover:bg-[#084e96] active:scale-[0.98] text-white font-black text-[10px] uppercase tracking-wider transition-all shadow flex items-center justify-center gap-1 cursor-pointer border border-blue-400/30"
-                  >
-                    <Linkedin size={12} />
-                    <span>Connect</span>
-                    <ExternalLink size={10} className="opacity-70" />
-                  </button>
+                  {/* Connect Button - Only for LinkedIn participants */}
+                  {!isNormalParticipant && (
+                    <button
+                      type="button"
+                      onClick={() => handleConnectClick(p)}
+                      className="w-full py-1.5 px-2 rounded-lg bg-[#0A66C2] hover:bg-[#084e96] active:scale-[0.98] text-white font-black text-[10px] uppercase tracking-wider transition-all shadow flex items-center justify-center gap-1 cursor-pointer border border-blue-400/30"
+                    >
+                      <Linkedin size={12} />
+                      <span>Connect</span>
+                      <ExternalLink size={10} className="opacity-70" />
+                    </button>
+                  )}
                 </motion.div>
               );
             })}

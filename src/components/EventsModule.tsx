@@ -47,6 +47,7 @@ export interface EventItem {
   endDate: string;
   status: "active" | "upcoming" | "completed";
   eventType: "public" | "internal";
+  roomType?: "linkedin" | "normal";
   createdBy: string;
   createdAt?: any;
   updatedAt?: any;
@@ -82,6 +83,7 @@ export function EventsModule({ currentUserEmail, currentUserId, isAdmin = false 
   const [description, setDescription] = useState<string>("");
   const [venue, setVenue] = useState<string>("");
   const [eventType, setEventType] = useState<"public" | "internal">("public");
+  const [roomType, setRoomType] = useState<"linkedin" | "normal">("linkedin");
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
   const [bannerUrl, setBannerUrl] = useState<string>("");
@@ -144,6 +146,7 @@ export function EventsModule({ currentUserEmail, currentUserId, isAdmin = false 
     setDescription("");
     setVenue("");
     setEventType("public");
+    setRoomType("linkedin");
     
     // Set default start/end dates
     const now = new Date();
@@ -173,6 +176,7 @@ export function EventsModule({ currentUserEmail, currentUserId, isAdmin = false 
     setDescription(event.description || "");
     setVenue(event.venue || "");
     setEventType(event.eventType || "public");
+    setRoomType(event.roomType || "linkedin");
     setStartDate(event.startDate || "");
     setEndDate(event.endDate || "");
     setBannerUrl(event.banner || "");
@@ -269,6 +273,7 @@ export function EventsModule({ currentUserEmail, currentUserId, isAdmin = false 
         endDate,
         status: computedStatus,
         eventType,
+        roomType,
         createdBy: currentUserEmail || currentUserId || "Admin",
         updatedAt: serverTimestamp(),
       };
@@ -488,8 +493,8 @@ export function EventsModule({ currentUserEmail, currentUserId, isAdmin = false 
                   {/* Status and Type Badges */}
                   <div className="absolute top-3 left-3 right-3 flex justify-between items-center gap-2 pointer-events-none">
                     {getStatusBadge(event.status)}
-                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-black/70 backdrop-blur-md border border-white/10 text-white shadow-sm">
-                      <Globe size={10} className="text-orange-400" /> Public Event
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-black/70 backdrop-blur-md border border-white/10 text-orange-400 shadow-sm">
+                      {event.roomType === "normal" ? "○ Normal Room" : "○ LinkedIn Sync"}
                     </span>
                   </div>
                 </div>
@@ -848,47 +853,51 @@ export function EventsModule({ currentUserEmail, currentUserId, isAdmin = false 
                     />
                   </div>
 
-                  {/* 3. Event Type Selection */}
+                  {/* 3. Event Type (Room Type) Selection */}
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-black uppercase tracking-widest text-neutral-400 block">
-                      Event Type Selection *
+                      Event Type *
                     </label>
-                    <div className="grid grid-cols-2 gap-3">
-                      {/* Public Event (Selected) */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <button
                         type="button"
-                        onClick={() => setEventType("public")}
+                        onClick={() => setRoomType("linkedin")}
                         className={`p-3.5 rounded-xl border text-left flex items-center justify-between transition-all cursor-pointer ${
-                          eventType === "public"
+                          roomType === "linkedin"
                             ? "bg-orange-500/15 border-orange-500 text-white shadow-md"
-                            : "bg-neutral-900 border-neutral-800 text-neutral-400"
+                            : "bg-neutral-900 border-neutral-800 text-neutral-400 hover:border-neutral-700"
                         }`}
                       >
                         <div className="space-y-0.5">
                           <span className="text-xs font-black block flex items-center gap-1.5">
-                            <Globe size={13} className="text-orange-500" />
-                            Public Event
+                            <span className="w-2.5 h-2.5 rounded-full border border-orange-500 flex items-center justify-center shrink-0">
+                              {roomType === "linkedin" && <span className="w-1.5 h-1.5 rounded-full bg-orange-500" />}
+                            </span>
+                            ○ LinkedIn Sync Room
                           </span>
-                          <span className="text-[9px] text-neutral-400 block">Open for all students</span>
+                          <span className="text-[9px] text-neutral-400 block pl-4">LinkedIn OAuth &amp; Profile Sync</span>
                         </div>
-                        {eventType === "public" && (
-                          <span className="w-2 h-2 rounded-full bg-orange-500 shrink-0" />
-                        )}
                       </button>
 
-                      {/* Campus Internal (Disabled / Coming Soon) */}
-                      <div className="p-3.5 rounded-xl border border-neutral-800/60 bg-neutral-950/60 text-neutral-500 opacity-60 cursor-not-allowed select-none flex items-center justify-between">
+                      <button
+                        type="button"
+                        onClick={() => setRoomType("normal")}
+                        className={`p-3.5 rounded-xl border text-left flex items-center justify-between transition-all cursor-pointer ${
+                          roomType === "normal"
+                            ? "bg-orange-500/15 border-orange-500 text-white shadow-md"
+                            : "bg-neutral-900 border-neutral-800 text-neutral-400 hover:border-neutral-700"
+                        }`}
+                      >
                         <div className="space-y-0.5">
-                          <span className="text-xs font-bold block flex items-center gap-1.5">
-                            <Lock size={13} className="text-neutral-500" />
-                            Campus Internal
+                          <span className="text-xs font-black block flex items-center gap-1.5">
+                            <span className="w-2.5 h-2.5 rounded-full border border-orange-500 flex items-center justify-center shrink-0">
+                              {roomType === "normal" && <span className="w-1.5 h-1.5 rounded-full bg-orange-500" />}
+                            </span>
+                            ○ Normal Room
                           </span>
-                          <span className="text-[9px] text-neutral-600 block">Restricted department rooms</span>
+                          <span className="text-[9px] text-neutral-400 block pl-4">Simple Name Entry (No LinkedIn)</span>
                         </div>
-                        <span className="px-2 py-0.5 rounded text-[8px] font-black bg-neutral-800 text-neutral-400 uppercase tracking-widest">
-                          Coming Soon
-                        </span>
-                      </div>
+                      </button>
                     </div>
                   </div>
 

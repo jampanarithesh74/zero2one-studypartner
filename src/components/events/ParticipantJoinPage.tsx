@@ -1,4 +1,4 @@
-import { useState, useEffect, MouseEvent } from "react";
+import { useState, useEffect, MouseEvent, FormEvent } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { motion } from "motion/react";
 import { 
@@ -14,7 +14,7 @@ import {
   Clock, 
   Globe 
 } from "lucide-react";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, getDoc, collection, addDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "../../lib/firebase";
 import { EventItem } from "../PublicEventPage";
 import { extractLinkedinUsername } from "../ParticipantOnboarding";
@@ -28,6 +28,10 @@ export function ParticipantJoinPage() {
   const [checkingAuth, setCheckingAuth] = useState<boolean>(true);
   const [isImporting, setIsImporting] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string>("");
+
+  // Normal Room state
+  const [normalName, setNormalName] = useState<string>("");
+  const [submittingNormal, setSubmittingNormal] = useState<boolean>(false);
 
   // 1. Check existing participant session & OAuth URL params
   useEffect(() => {
@@ -226,6 +230,52 @@ export function ParticipantJoinPage() {
     navigate(`/events/${eventId}/onboarding`);
   };
 
+  const handleNormalJoin = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!eventId) return;
+
+    const trimmed = normalName.trim();
+    if (!trimmed) {
+      setErrorMsg("Please enter your name.");
+      return;
+    }
+    if (trimmed.length < 2) {
+      setErrorMsg("Name must be at least 2 characters long.");
+      return;
+    }
+    if (trimmed.length > 40) {
+      setErrorMsg("Name must not exceed 40 characters.");
+      return;
+    }
+
+    setErrorMsg("");
+    setSubmittingNormal(true);
+
+    try {
+      const docRef = await addDoc(collection(db, "events", eventId, "participants"), {
+        name: trimmed,
+        roomType: "normal",
+        online: true,
+        joinedAt: serverTimestamp(),
+        lastSeen: serverTimestamp(),
+      });
+
+      const participantData = {
+        id: docRef.id,
+        name: trimmed,
+        roomType: "normal",
+        online: true,
+      };
+
+      localStorage.setItem(`z2o_participant_${eventId}`, JSON.stringify(participantData));
+      navigate(`/events/${eventId}/room`, { replace: true });
+    } catch (err: any) {
+      console.error("Error creating normal participant:", err);
+      setErrorMsg("Failed to join event room. Please try again.");
+      setSubmittingNormal(false);
+    }
+  };
+
   const formatDateTime = (isoStr: string) => {
     if (!isoStr) return "TBD";
     try {
@@ -252,6 +302,107 @@ export function ParticipantJoinPage() {
         <p className="text-xs font-mono font-bold uppercase tracking-wider text-neutral-400">
           Checking event authentication...
         </p>
+      </div>
+    );
+  }
+
+  const isNormalRoom = event?.roomType === "normal";
+
+  if (isNormalRoom) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0a] text-white font-sans selection:bg-orange-500 selection:text-white pb-20 pt-6 px-4 sm:px-6 flex items-center justify-center">
+        <div className="w-full max-w-md space-y-6">
+          
+          {/* Back Button */}
+          <button
+            type="button"
+            onClick={() => navigate(`/events/${eventId}`)}
+            className="inline-flex items-center gap-2 text-xs font-bold text-neutral-400 hover:text-white transition-colors cursor-pointer"
+          >
+            <ArrowLeft size={16} className="text-orange-500" />
+            <span>Back to Event Overview</span>
+          </button>
+
+          {/* Event Header Summary Card */}
+          {event && (
+            <div className="p-4 rounded-2xl bg-neutral-900 border border-neutral-800 space-y-3 text-left">
+              <div className="flex items-center gap-2">
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-black uppercase tracking-wider bg-orange-500/15 border border-orange-500/30 text-orange-400">
+                  NORMAL ROOM JOIN
+                </span>
+              </div>
+
+              <h2 className="text-lg font-black text-white tracking-tight">
+                {event.title}
+              </h2>
+
+              <div className="space-y-1.5 text-xs text-neutral-300 font-medium pt-1 border-t border-neutral-800/80">
+                <div className="flex items-center gap-2">
+                  <MapPin size={13} className="text-orange-500 shrink-0" />
+                  <span className="truncate">{event.venue}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Clock size={13} className="text-orange-500 shrink-0" />
+                  <span>{formatDateTime(event.startDate)}</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Normal Room Join Card */}
+          <div className="p-6 md:p-8 rounded-3xl bg-[#121212] border border-neutral-800 shadow-2xl space-y-6 text-left">
+            <div className="space-y-1">
+              <h1 className="text-xl md:text-2xl font-black text-white tracking-tight">
+                Enter Your Name
+              </h1>
+              <p className="text-xs text-neutral-400 font-medium leading-relaxed">
+                Please enter your name to enter the event room.
+              </p>
+            </div>
+
+            {/* Error Alert */}
+            {errorMsg && (
+              <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl text-xs font-bold flex items-center gap-2">
+                <AlertCircle size={16} className="shrink-0" />
+                <span>{errorMsg}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleNormalJoin} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-mono font-black uppercase tracking-wider text-neutral-400 block">
+                  Your Name
+                </label>
+                <input
+                  type="text"
+                  required
+                  minLength={2}
+                  maxLength={40}
+                  value={normalName}
+                  onChange={(e) => setNormalName(e.target.value)}
+                  placeholder="Enter Your Name"
+                  className="w-full px-4 py-3 text-sm bg-neutral-900 border border-neutral-800 hover:border-neutral-700 focus:border-orange-500 rounded-xl outline-none text-white font-bold transition-all placeholder:text-neutral-600"
+                  autoFocus
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={submittingNormal}
+                className="w-full py-3.5 px-6 rounded-2xl bg-orange-500 hover:bg-orange-600 active:scale-[0.99] text-white font-black text-xs md:text-sm uppercase tracking-wider transition-all shadow-xl shadow-orange-500/20 cursor-pointer flex items-center justify-center gap-2 border border-orange-400/40 disabled:opacity-50"
+              >
+                {submittingNormal ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    <span>Joining Room...</span>
+                  </>
+                ) : (
+                  <span>Continue</span>
+                )}
+              </button>
+            </form>
+          </div>
+        </div>
       </div>
     );
   }
