@@ -27,9 +27,10 @@ import { EventsModule } from "../EventsModule";
 interface EventsListingPageProps {
   currentUserEmail?: string | null;
   currentUserId?: string | null;
+  isAdmin?: boolean;
 }
 
-export function EventsListingPage({ currentUserEmail, currentUserId }: EventsListingPageProps) {
+export function EventsListingPage({ currentUserEmail, currentUserId, isAdmin = false }: EventsListingPageProps) {
   const navigate = useNavigate();
   const [events, setEvents] = useState<EventItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -205,16 +206,18 @@ export function EventsListingPage({ currentUserEmail, currentUserId }: EventsLis
             </p>
           </div>
 
-          <div className="flex items-center gap-2 self-start sm:self-auto">
-            <button
-              type="button"
-              onClick={() => setShowAdminModal(true)}
-              className="px-4 py-2.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-black text-xs uppercase tracking-wider transition-all shadow-lg hover:shadow-orange-500/20 active:scale-95 cursor-pointer flex items-center gap-1.5 border border-orange-400/40"
-            >
-              <Plus size={14} />
-              <span>Manage Events</span>
-            </button>
-          </div>
+          {isAdmin && (
+            <div className="flex items-center gap-2 self-start sm:self-auto">
+              <button
+                type="button"
+                onClick={() => setShowAdminModal(true)}
+                className="px-4 py-2.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-black text-xs uppercase tracking-wider transition-all shadow-lg hover:shadow-orange-500/20 active:scale-95 cursor-pointer flex items-center gap-1.5 border border-orange-400/40"
+              >
+                <Plus size={14} />
+                <span>Manage Events</span>
+              </button>
+            </div>
+          )}
         </header>
 
         {/* Search Bar */}
@@ -438,7 +441,7 @@ export function EventsListingPage({ currentUserEmail, currentUserId }: EventsLis
 
       {/* Admin Events Management Modal */}
       <AnimatePresence>
-        {showAdminModal && (
+        {isAdmin && showAdminModal && (
           <div className="fixed inset-0 z-[2000] flex items-center justify-center p-4">
             <motion.div
               initial={{ opacity: 0 }}
@@ -463,7 +466,7 @@ export function EventsListingPage({ currentUserEmail, currentUserId }: EventsLis
                   <X size={18} />
                 </button>
               </div>
-              <EventsModule currentUserEmail={currentUserEmail} currentUserId={currentUserId} />
+              <EventsModule currentUserEmail={currentUserEmail} currentUserId={currentUserId} isAdmin={isAdmin} />
             </motion.div>
           </div>
         )}

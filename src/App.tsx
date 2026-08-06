@@ -21,6 +21,7 @@ import { ParticipantJoinPage } from "./components/events/ParticipantJoinPage";
 import { ParticipantOnboardingPage } from "./components/events/ParticipantOnboardingPage";
 import { EventRoomPage } from "./components/events/EventRoomPage";
 import { ParticipantProfilePage } from "./components/events/ParticipantProfilePage";
+import { UnauthorizedAdminPage } from "./components/events/UnauthorizedAdminPage";
 
 type ViewState = "year-selection" | "dept-selection" | "sem-selection" | "choice-selection" | "syllabus-view" | "resources-view" | "onboarding" | "login" | "syllabus-copy-view" | "dashboard" | "profile-page" | "tools-page" | "public-event-page";
 
@@ -653,19 +654,24 @@ export default function App() {
 
         setAuthError(null);
 
-        // Check if user is in admins collection
+        // Check if user is in admins collection (by uid or email document)
         let isCurrentUserAdmin = false;
         try {
-          const adminDoc = await getDoc(doc(db, "admins", user.uid));
-          if (adminDoc.exists()) {
-            setIsAdmin(true);
-            isCurrentUserAdmin = true;
-          } else if (ALLOWED_ADMIN_EMAILS.includes(user.email || "")) {
-            // Bootstrap: Add to admins collection if email is allowed
-            await setDoc(doc(db, "admins", user.uid), {
-              email: user.email,
-              addedAt: serverTimestamp()
-            });
+          const adminUidDoc = await getDoc(doc(db, "admins", user.uid));
+          let adminEmailDoc = null;
+          if (user.email) {
+            try {
+              adminEmailDoc = await getDoc(doc(db, "admins", user.email));
+            } catch (e) {
+              // Ignore if email path document not found
+            }
+          }
+
+          if (
+            adminUidDoc.exists() || 
+            (adminEmailDoc && adminEmailDoc.exists()) || 
+            ALLOWED_ADMIN_EMAILS.includes(user.email || "")
+          ) {
             setIsAdmin(true);
             isCurrentUserAdmin = true;
           } else {
@@ -5296,12 +5302,18 @@ export default function App() {
             )}
             {location.pathname.startsWith("/events") && (
               <Routes>
-                <Route path="/events" element={<EventsListingPage currentUserEmail={user?.email} currentUserId={user?.uid} />} />
+                <Route path="/events" element={<EventsListingPage currentUserEmail={user?.email} currentUserId={user?.uid} isAdmin={isAdmin} />} />
                 <Route path="/events/:eventId" element={<PublicEventPage onNavigateHome={() => navigate("/events")} />} />
                 <Route path="/events/:eventId/join" element={<ParticipantJoinPage />} />
                 <Route path="/events/:eventId/onboarding" element={<ParticipantOnboardingPage />} />
                 <Route path="/events/:eventId/room" element={<EventRoomPage currentUserEmail={user?.email} currentUserId={user?.uid} />} />
                 <Route path="/events/:eventId/participant/:participantId" element={<ParticipantProfilePage />} />
+
+                {/* Protect Admin Event Routes */}
+                <Route path="/events/create" element={isAdmin ? <EventsModule currentUserEmail={user?.email} currentUserId={user?.uid} isAdmin={isAdmin} /> : <UnauthorizedAdminPage />} />
+                <Route path="/events/manage" element={isAdmin ? <EventsModule currentUserEmail={user?.email} currentUserId={user?.uid} isAdmin={isAdmin} /> : <UnauthorizedAdminPage />} />
+                <Route path="/events/edit/:eventId" element={isAdmin ? <EventsModule currentUserEmail={user?.email} currentUserId={user?.uid} isAdmin={isAdmin} /> : <UnauthorizedAdminPage />} />
+                <Route path="/events/delete/:eventId" element={isAdmin ? <EventsModule currentUserEmail={user?.email} currentUserId={user?.uid} isAdmin={isAdmin} /> : <UnauthorizedAdminPage />} />
               </Routes>
             )}
           </div>
@@ -5681,7 +5693,7 @@ export default function App() {
 
               {activeAdminTab === "events" ? (
                 <div className="flex-1 overflow-y-auto pr-1">
-                  <EventsModule currentUserEmail={user?.email} currentUserId={user?.uid} />
+                  <EventsModule currentUserEmail={user?.email} currentUserId={user?.uid} isAdmin={isAdmin} />
                 </div>
               ) : activeAdminTab === "norm" ? (
                 <>

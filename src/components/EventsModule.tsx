@@ -55,9 +55,10 @@ export interface EventItem {
 interface EventsModuleProps {
   currentUserEmail?: string | null;
   currentUserId?: string | null;
+  isAdmin?: boolean;
 }
 
-export function EventsModule({ currentUserEmail, currentUserId }: EventsModuleProps) {
+export function EventsModule({ currentUserEmail, currentUserId, isAdmin = false }: EventsModuleProps) {
   const [events, setEvents] = useState<EventItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
@@ -187,6 +188,11 @@ export function EventsModule({ currentUserEmail, currentUserId }: EventsModulePr
     e.preventDefault();
     setFormError("");
 
+    if (!isAdmin) {
+      setFormError("Unauthorized: Only administrators are permitted to create, edit, or publish events.");
+      return;
+    }
+
     if (!title.trim()) {
       setFormError("Event Title is required.");
       return;
@@ -302,6 +308,11 @@ export function EventsModule({ currentUserEmail, currentUserId }: EventsModulePr
   };
 
   const handleDeleteEvent = async (eventId: string, eventTitle: string) => {
+    if (!isAdmin) {
+      alert("Unauthorized: Only administrators are permitted to delete events.");
+      return;
+    }
+
     if (!window.confirm(`Are you sure you want to delete the event "${eventTitle}"? This cannot be undone.`)) {
       return;
     }
