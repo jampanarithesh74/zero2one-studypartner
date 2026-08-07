@@ -16,6 +16,9 @@ import { doc, collection, onSnapshot } from "firebase/firestore";
 import { db } from "../../lib/firebase";
 import { EventItem } from "../PublicEventPage";
 import { ActiveQuestionData, LiveAnswerData } from "../EventRoom/LiveRoomPanel";
+import { QuizSessionData, QuizLeaderboardEntry } from "../../data/quizQuestions";
+import { QuizLeaderboardView } from "./QuizLeaderboardView";
+import { Zap, Clock } from "lucide-react";
 
 interface AggregatedBubble {
   key: string;
@@ -37,6 +40,8 @@ export function LiveWallPage({ isAdmin }: LiveWallPageProps) {
   const [event, setEvent] = useState<EventItem | null>(null);
   const [activeQuestion, setActiveQuestion] = useState<ActiveQuestionData | null>(null);
   const [answers, setAnswers] = useState<LiveAnswerData[]>([]);
+  const [quizSession, setQuizSession] = useState<QuizSessionData | null>(null);
+  const [quizLeaderboard, setQuizLeaderboard] = useState<QuizLeaderboardEntry[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
 
@@ -134,6 +139,44 @@ export function LiveWallPage({ isAdmin }: LiveWallPageProps) {
     );
 
     return () => unsubAnswers();
+  }, [eventId]);
+
+  // 4. Listen to Quiz Session
+  useEffect(() => {
+    if (!eventId) return;
+
+    const quizSessionRef = doc(db, "events", eventId, "activities", "quiz", "session", "current");
+    const unsubQuizSession = onSnapshot(
+      quizSessionRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          setQuizSession(docSnap.data() as QuizSessionData);
+        } else {
+          setQuizSession(null);
+        }
+      },
+      (err) => console.warn("Live wall quiz session listener error:", err)
+    );
+
+    return () => unsubQuizSession();
+  }, [eventId]);
+
+  // 5. Listen to Quiz Leaderboard
+  useEffect(() => {
+    if (!eventId) return;
+
+    const leaderboardRef = collection(db, "events", eventId, "activities", "quiz", "leaderboard");
+    const unsubLb = onSnapshot(
+      leaderboardRef,
+      (snap) => {
+        const list: QuizLeaderboardEntry[] = [];
+        snap.forEach((d) => list.push(d.data() as QuizLeaderboardEntry));
+        setQuizLeaderboard(list);
+      },
+      (err) => console.warn("Live wall quiz leaderboard listener error:", err)
+    );
+
+    return () => unsubLb();
   }, [eventId]);
 
   // Filter matching answers for current active question
@@ -331,6 +374,116 @@ export function LiveWallPage({ isAdmin }: LiveWallPageProps) {
             <div className="w-10 h-10 border-3 border-cyan-500 border-t-transparent rounded-full animate-spin mx-auto" />
             <p className="text-sm font-mono text-neutral-400">Syncing Stage Presentation...</p>
           </div>
+        ) : quizSession && quizSession.status === "running" ? (
+          /* LIVE QUIZ STAGE PRESENTATION */
+          <AnimatePresence mode="wait">
+            {quizSession.stage === "answer_reveal" ? (
+              <motion.div
+                key="quiz-reveal-stage"
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="max-w-4xl mx-auto w-full my-auto space-y-6 text-center"
+              >
+                <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-mono font-black uppercase tracking-widest text-emerald-400 bg-emerald-500/15 border border-emerald-500/30">
+                  <span>✔ CORRECT ANSWER REVEAL</span>
+                </div>
+
+                <div className="p-8 sm:p-10 rounded-3xl bg-gradient-to-br from-emerald-500/20 to-neutral-950 border-2 border-emerald-500/60 text-white space-y-3 shadow-2xl">
+                  <span className="text-xs font-mono font-black text-emerald-400 uppercase tracking-widest block">
+                    Correct Option
+                  </span>
+                  <h2 className="text-3xl sm:text-5xl font-black text-emerald-300">
+                    {String.fromCharCode(65 + (quizSession.currentQuestion?.correctOptionIndex || 0))}.{" "}
+                    {quizSession.currentQuestion?.options[quizSession.currentQuestion?.correctOptionIndex || 0]}
+                  </h2>
+                </div>
+
+                <div className="p-6 rounded-2xl bg-neutral-900/90 border border-neutral-800 text-sm sm:text-base text-neutral-200 leading-relaxed max-w-3xl mx-auto text-left">
+                  <span className="font-mono font-bold text-neutral-400 block mb-1 text-xs uppercase">
+                    Explanation:
+                  </span>
+                  {quizSession.currentQuestion?.explanation}
+                </div>
+
+                {quizSession.fastestResponse && (
+                  <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 max-w-2xl mx-auto flex items-center justify-between gap-4 font-mono font-bold text-sm shadow-xl">
+                    <div className="flex items-center gap-3">
+                      <Zap size={24} className="text-amber-400 animate-bounce shrink-0" />
+                      <div className="text-left">
+                        <span className="text-[10px] text-amber-400 uppercase tracking-wider block">
+                          ⚡ Fastest Correct Answer
+                        </span>
+                        <span className="text-base font-black text-white block">
+                          {quizSession.fastestResponse.participantName}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-sm font-black text-amber-300 block">
+                        {quizSession.fastestResponse.responseTimeSec}s
+                      </span>
+                      <span className="text-xs text-emerald-400 font-black">
+                        +{quizSession.fastestResponse.speedBonus} Speed Bonus
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </motion.div>
+            ) : quizSession.stage === "leaderboard" || quizSession.stage === "completed" ? (
+              <motion.div
+                key="quiz-leaderboard-stage"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="max-w-4xl mx-auto w-full my-auto"
+              >
+                <QuizLeaderboardView
+                  leaderboard={quizLeaderboard}
+                  isFinal={quizSession.stage === "completed"}
+                  title={
+                    quizSession.stage === "completed"
+                      ? "🏆 QUIZ CHAMPIONS - FINAL STANDINGS"
+                      : `🏆 Standings (Question ${quizSession.currentQuestionIndex + 1} of 5)`
+                  }
+                />
+              </motion.div>
+            ) : (
+              /* QUESTION STAGE */
+              <motion.div
+                key={`quiz-question-${quizSession.currentQuestionIndex}`}
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -15 }}
+                className="max-w-4xl mx-auto w-full my-auto space-y-8"
+              >
+                <div className="text-center space-y-3">
+                  <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-mono font-black uppercase tracking-widest text-orange-400 bg-orange-500/15 border border-orange-500/30">
+                    <Sparkles size={14} className="text-orange-400" />
+                    <span>QUESTION {quizSession.currentQuestionIndex + 1} OF 5</span>
+                  </div>
+
+                  <h2 className="text-2xl sm:text-4xl font-black text-white tracking-tight leading-tight">
+                    {quizSession.currentQuestion?.text}
+                  </h2>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-3xl mx-auto">
+                  {quizSession.currentQuestion?.options.map((opt, idx) => (
+                    <div
+                      key={idx}
+                      className="p-5 rounded-2xl bg-neutral-900/90 border-2 border-neutral-800 text-white font-bold text-base flex items-center gap-4 shadow-xl"
+                    >
+                      <span className="w-9 h-9 rounded-xl bg-orange-500 text-white font-mono font-extrabold text-sm flex items-center justify-center shrink-0 border border-orange-400">
+                        {String.fromCharCode(65 + idx)}
+                      </span>
+                      <span>{opt}</span>
+                    </div>
+                  ))}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         ) : activeQuestion && activeQuestion.question ? (
           <AnimatePresence mode="wait">
             <motion.div

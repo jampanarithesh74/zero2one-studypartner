@@ -4,15 +4,16 @@ import {
   Clock, 
   CheckCircle2, 
   AlertCircle, 
-  HelpCircle, 
   Loader2,
   Sparkles,
-  Hourglass
+  Hourglass,
+  Zap
 } from "lucide-react";
-import { doc, onSnapshot, setDoc, updateDoc, serverTimestamp } from "firebase/firestore";
+import { doc, collection, onSnapshot, setDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "../../lib/firebase";
 import { Participant } from "../ParticipantOnboarding";
-import { QuizSessionData } from "../../data/quizQuestions";
+import { QuizSessionData, QuizLeaderboardEntry } from "../../data/quizQuestions";
+import { QuizLeaderboardView } from "./QuizLeaderboardView";
 
 interface QuizModeCardProps {
   eventId: string;
@@ -21,6 +22,7 @@ interface QuizModeCardProps {
 
 export function QuizModeCard({ eventId, currentParticipant }: QuizModeCardProps) {
   const [session, setSession] = useState<QuizSessionData | null>(null);
+  const [leaderboard, setLeaderboard] = useState<QuizLeaderboardEntry[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
   const [isSubmitted, setIsSubmitted] = useState<boolean>(false);
@@ -44,8 +46,7 @@ export function QuizModeCard({ eventId, currentParticipant }: QuizModeCardProps)
       sessionRef,
       (docSnap) => {
         if (docSnap.exists()) {
-          const data = docSnap.data() as QuizSessionData;
-          setSession(data);
+          setSession(docSnap.data() as QuizSessionData);
         } else {
           setSession(null);
         }
@@ -60,7 +61,30 @@ export function QuizModeCard({ eventId, currentParticipant }: QuizModeCardProps)
     return () => unsubSession();
   }, [eventId]);
 
-  // 2. Reset selection state whenever currentQuestionIndex changes
+  // 2. Listen to Leaderboard
+  useEffect(() => {
+    if (!eventId) return;
+
+    const leaderboardRef = collection(db, "events", eventId, "activities", "quiz", "leaderboard");
+
+    const unsubLeaderboard = onSnapshot(
+      leaderboardRef,
+      (snapshot) => {
+        const list: QuizLeaderboardEntry[] = [];
+        snapshot.forEach((docSnap) => {
+          list.push(docSnap.data() as QuizLeaderboardEntry);
+        });
+        setLeaderboard(list);
+      },
+      (error) => {
+        console.warn("Leaderboard listener error:", error);
+      }
+    );
+
+    return () => unsubLeaderboard();
+  }, [eventId]);
+
+  // 3. Reset selection state whenever currentQuestionIndex changes
   useEffect(() => {
     setSelectedOption(null);
     setIsSubmitted(false);
@@ -68,7 +92,7 @@ export function QuizModeCard({ eventId, currentParticipant }: QuizModeCardProps)
     setTransitionCountdown(3);
   }, [session?.currentQuestionIndex]);
 
-  // 3. Listen if user already submitted for current question in Firestore
+  // 4. Listen if participant already submitted for current question in Firestore
   useEffect(() => {
     if (!eventId || !session || session.status !== "running" || session.currentQuestionIndex === undefined) {
       return;
@@ -98,9 +122,9 @@ export function QuizModeCard({ eventId, currentParticipant }: QuizModeCardProps)
     return () => unsubResp();
   }, [eventId, session?.currentQuestionIndex, session?.status, participantId]);
 
-  // 4. Timer Logic
+  // 5. Question Timer Logic
   useEffect(() => {
-    if (!session || session.status !== "running" || !session.questionStartTime) return;
+    if (!session || session.status !== "running" || session.stage !== "question" || !session.questionStartTime) return;
 
     const interval = setInterval(() => {
       const elapsed = Math.floor((Date.now() - session.questionStartTime) / 1000);
@@ -113,9 +137,9 @@ export function QuizModeCard({ eventId, currentParticipant }: QuizModeCardProps)
     }, 500);
 
     return () => clearInterval(interval);
-  }, [session?.questionStartTime, session?.timerDuration, session?.status, isTimesUp]);
+  }, [session?.questionStartTime, session?.timerDuration, session?.status, session?.stage, isTimesUp]);
 
-  // 5. 3-2-1 Transition countdown when timer reaches 0
+  // 6. 3-2-1 Transition countdown when question timer reaches 0
   useEffect(() => {
     if (!isTimesUp) return;
 
@@ -137,7 +161,7 @@ export function QuizModeCard({ eventId, currentParticipant }: QuizModeCardProps)
     return () => clearInterval(timer);
   }, [isTimesUp, isSubmitted]);
 
-  // Handle Option Selection & Firestore Save
+  // Save Option Selection to Firestore
   const handleOptionSelect = async (optionIdx: number, forceAutoSubmit = false) => {
     if (isSubmitted && !forceAutoSubmit) return;
     if (session?.status !== "running") return;
@@ -157,12 +181,15 @@ export function QuizModeCard({ eventId, currentParticipant }: QuizModeCardProps)
       );
 
       const qKey = `question${session.currentQuestionIndex}`;
+      const submittedTime = Date.now();
+
       await setDoc(
         responseRef,
         {
           participantId,
           participantName: currentParticipant?.name || "Participant",
           [qKey]: optionIdx,
+          [`${qKey}_submittedAt`]: submittedTime,
           updatedAt: serverTimestamp(),
         },
         { merge: true }
@@ -182,7 +209,7 @@ export function QuizModeCard({ eventId, currentParticipant }: QuizModeCardProps)
   }
 
   if (!session || session.status !== "running") {
-    return null; // Don't render quiz card if no active quiz session
+    return null;
   }
 
   const currentQ = session.currentQuestion;
@@ -190,7 +217,7 @@ export function QuizModeCard({ eventId, currentParticipant }: QuizModeCardProps)
 
   return (
     <div className="flex flex-col h-full bg-[#121212] border border-orange-500/40 rounded-2xl overflow-hidden shadow-2xl text-left font-sans relative">
-      {/* Top Banner */}
+      {/* Top Banner Header */}
       <div className="p-3.5 border-b border-neutral-800 bg-neutral-900/90 flex items-center justify-between gap-2 shrink-0">
         <div className="flex items-center gap-2">
           <span className="text-base">🧠</span>
@@ -206,20 +233,107 @@ export function QuizModeCard({ eventId, currentParticipant }: QuizModeCardProps)
         </div>
       </div>
 
-      {/* Progress Bar */}
-      <div className="w-full bg-neutral-900 h-1.5 overflow-hidden relative">
-        <div
-          className={`h-full transition-all duration-500 ${
-            timeRemaining <= 5 ? "bg-red-500 animate-pulse" : "bg-orange-500"
-          }`}
-          style={{ width: `${timerPercentage}%` }}
-        />
-      </div>
+      {/* Progress Bar (Visible during Question stage) */}
+      {session.stage === "question" && (
+        <div className="w-full bg-neutral-900 h-1.5 overflow-hidden relative">
+          <div
+            className={`h-full transition-all duration-500 ${
+              timeRemaining <= 5 ? "bg-red-500 animate-pulse" : "bg-orange-500"
+            }`}
+            style={{ width: `${timerPercentage}%` }}
+          />
+        </div>
+      )}
 
-      {/* Main Content */}
+      {/* Main Dynamic View */}
       <div className="flex-1 p-5 sm:p-6 flex flex-col justify-between space-y-6 overflow-y-auto">
         <AnimatePresence mode="wait">
-          {isTimesUp && transitionCountdown > 0 ? (
+          {session.stage === "answer_reveal" ? (
+            /* ANSWER REVEAL SCREEN */
+            <motion.div
+              key="reveal-screen"
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.98 }}
+              className="flex-1 flex flex-col justify-between space-y-5 my-auto"
+            >
+              <div className="space-y-4 text-center sm:text-left">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-mono font-black uppercase text-emerald-400 bg-emerald-500/15 border border-emerald-500/30">
+                  <span>✔ CORRECT ANSWER REVEAL</span>
+                </div>
+
+                <div className="p-5 rounded-2xl bg-gradient-to-br from-emerald-500/20 to-neutral-900 border-2 border-emerald-500/60 text-white space-y-2 shadow-xl">
+                  <span className="text-[10px] font-mono font-black text-emerald-400 uppercase tracking-widest block">
+                    Correct Answer
+                  </span>
+                  <p className="text-xl font-black text-emerald-300">
+                    {String.fromCharCode(65 + (currentQ?.correctOptionIndex || 0))}.{" "}
+                    {currentQ?.options[currentQ?.correctOptionIndex || 0]}
+                  </p>
+                </div>
+
+                <div className="p-4 rounded-xl bg-neutral-900 border border-neutral-800 text-xs text-neutral-300 leading-relaxed text-left">
+                  <span className="font-mono font-bold text-neutral-400 block mb-1">
+                    Explanation:
+                  </span>
+                  {currentQ?.explanation}
+                </div>
+
+                {/* Fastest Answer Badge */}
+                {session.fastestResponse && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 flex items-center justify-between gap-3 text-xs font-mono font-bold shadow-lg"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Zap size={18} className="text-amber-400 animate-bounce shrink-0" />
+                      <div>
+                        <span className="text-[10px] text-amber-400 uppercase tracking-wider block">
+                          ⚡ Fastest Correct Answer
+                        </span>
+                        <span className="text-sm font-black text-white block">
+                          {session.fastestResponse.participantName}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-xs text-amber-400 block">
+                        {session.fastestResponse.responseTimeSec}s
+                      </span>
+                      <span className="text-[10px] text-emerald-400 font-black">
+                        +{session.fastestResponse.speedBonus} Speed Bonus
+                      </span>
+                    </div>
+                  </motion.div>
+                )}
+              </div>
+
+              <div className="text-center text-xs font-mono text-neutral-400 pt-2 border-t border-neutral-800">
+                <span>Waiting for leaderboard...</span>
+              </div>
+            </motion.div>
+          ) : session.stage === "leaderboard" || session.stage === "completed" ? (
+            /* LEADERBOARD / PODIUM VIEW */
+            <motion.div
+              key="leaderboard-screen"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="flex-1"
+            >
+              <QuizLeaderboardView
+                leaderboard={leaderboard}
+                currentParticipantId={participantId}
+                isFinal={session.stage === "completed"}
+                title={
+                  session.stage === "completed"
+                    ? "🏆 FINAL QUIZ WINNERS"
+                    : `🏆 Question ${session.currentQuestionIndex + 1} Standings`
+                }
+              />
+            </motion.div>
+          ) : isTimesUp && transitionCountdown > 0 ? (
             /* 3-2-1 TIME'S UP TRANSITION */
             <motion.div
               key="times-up-transition"
@@ -233,16 +347,16 @@ export function QuizModeCard({ eventId, currentParticipant }: QuizModeCardProps)
                 Time's Up!
               </h3>
               <p className="text-xs text-neutral-400 font-mono">
-                Next question loading in
+                Revealing correct answer in
               </p>
               <div className="w-14 h-14 rounded-2xl bg-orange-500/20 border border-orange-500/40 text-orange-400 font-mono font-black text-2xl flex items-center justify-center shadow-xl">
                 {transitionCountdown}
               </div>
             </motion.div>
           ) : (
-            /* QUESTION DISPLAY & OPTIONS */
+            /* QUESTION & 4 OPTIONS VIEW */
             <motion.div
-              key={session.currentQuestionIndex}
+              key={`question-${session.currentQuestionIndex}`}
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
@@ -295,7 +409,7 @@ export function QuizModeCard({ eventId, currentParticipant }: QuizModeCardProps)
                 })}
               </div>
 
-              {/* Footer Confirmation Status */}
+              {/* Footer Status */}
               <div className="pt-3 border-t border-neutral-800/90 flex items-center justify-between">
                 {isSubmitted ? (
                   <div className="flex items-center gap-2 text-xs font-mono font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3.5 py-2 rounded-xl">
