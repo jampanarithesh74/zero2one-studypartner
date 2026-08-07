@@ -125,6 +125,29 @@
         "questionId": { "type": "string" }
       },
       "required": ["participantId", "participantName", "answer", "questionId"]
+    },
+    "QuizSession": {
+      "title": "QuizSession",
+      "description": "Active real-time quiz session state for live activities",
+      "type": "object",
+      "properties": {
+        "status": { "type": "string" },
+        "currentQuestionIndex": { "type": "number" },
+        "isRunning": { "type": "boolean" },
+        "timerDuration": { "type": "number" },
+        "questionStartTime": { "type": "number" }
+      },
+      "required": ["status", "currentQuestionIndex", "isRunning", "timerDuration"]
+    },
+    "QuizResponse": {
+      "title": "QuizResponse",
+      "description": "Participant response mapping for active quiz questions",
+      "type": "object",
+      "properties": {
+        "participantId": { "type": "string" },
+        "participantName": { "type": "string" }
+      },
+      "required": ["participantId", "participantName"]
     }
   },
   "firestore": {
@@ -159,6 +182,14 @@
     "events/{eventId}/liveAnswers/{answerId}": {
       "schema": "LiveAnswer",
       "description": "Participant live responses to active questions"
+    },
+    "events/{eventId}/activities/quiz/session/current": {
+      "schema": "QuizSession",
+      "description": "Active quiz session broadcast state"
+    },
+    "events/{eventId}/activities/quiz/responses/{participantId}": {
+      "schema": "QuizResponse",
+      "description": "Participant submitted quiz responses"
     }
   }
 }

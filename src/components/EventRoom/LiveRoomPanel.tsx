@@ -22,6 +22,8 @@ import {
 import { db } from "../../lib/firebase";
 import { EventItem } from "../PublicEventPage";
 import { Participant } from "../ParticipantOnboarding";
+import { QuizModeCard } from "../events/QuizModeCard";
+import { QuizSessionData } from "../../data/quizQuestions";
 
 export interface ActiveQuestionData {
   question: string;
@@ -54,8 +56,32 @@ export function LiveRoomPanel({
   onOpenAskModal,
 }: LiveRoomPanelProps) {
   const [activeQuestion, setActiveQuestion] = useState<ActiveQuestionData | null>(null);
+  const [quizSession, setQuizSession] = useState<QuizSessionData | null>(null);
   const [answers, setAnswers] = useState<LiveAnswerData[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+
+  // Listen to Quiz Session in Firestore
+  useEffect(() => {
+    if (!event.id) return;
+
+    const quizSessionRef = doc(db, "events", event.id, "activities", "quiz", "session", "current");
+
+    const unsubQuizSession = onSnapshot(
+      quizSessionRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          setQuizSession(docSnap.data() as QuizSessionData);
+        } else {
+          setQuizSession(null);
+        }
+      },
+      (err) => {
+        console.warn("Quiz session listener warning:", err);
+      }
+    );
+
+    return () => unsubQuizSession();
+  }, [event.id]);
   
   // User answer input state
   const [userAnswer, setUserAnswer] = useState<string>("");
@@ -178,6 +204,10 @@ export function LiveRoomPanel({
       setIsSubmitting(false);
     }
   };
+
+  if (quizSession && quizSession.status === "running") {
+    return <QuizModeCard eventId={event.id} currentParticipant={currentParticipant} />;
+  }
 
   return (
     <div className="flex flex-col h-full bg-[#121212] border border-neutral-800/90 rounded-2xl overflow-hidden shadow-xl text-left font-sans">

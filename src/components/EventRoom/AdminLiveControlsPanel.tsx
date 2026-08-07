@@ -9,12 +9,14 @@ import {
   MessageSquare, 
   RefreshCw,
   CheckCircle2,
-  Users
+  Users,
+  Gamepad2
 } from "lucide-react";
 import { doc, collection, onSnapshot } from "firebase/firestore";
 import { db } from "../../lib/firebase";
 import { EventItem } from "../PublicEventPage";
 import { ActiveQuestionData, LiveAnswerData } from "./LiveRoomPanel";
+import { AdminQuizController } from "../events/AdminQuizController";
 
 interface AdminLiveControlsPanelProps {
   event: EventItem;
@@ -29,6 +31,7 @@ export function AdminLiveControlsPanel({
   onNavigateLiveWall,
   participantCount = 0,
 }: AdminLiveControlsPanelProps) {
+  const [controlMode, setControlMode] = useState<"qna" | "activities">("qna");
   const [activeQuestion, setActiveQuestion] = useState<ActiveQuestionData | null>(null);
   const [answers, setAnswers] = useState<LiveAnswerData[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -93,6 +96,16 @@ export function AdminLiveControlsPanel({
     : [];
   const responseCount = matchingAnswers.length;
 
+  if (controlMode === "activities") {
+    return (
+      <AdminQuizController
+        eventId={event.id}
+        participantCount={participantCount}
+        onBackToControls={() => setControlMode("qna")}
+      />
+    );
+  }
+
   return (
     <div className="flex flex-col h-full bg-[#121212] border border-neutral-800/90 rounded-2xl overflow-hidden shadow-xl text-left font-sans">
       {/* Panel Header */}
@@ -104,10 +117,33 @@ export function AdminLiveControlsPanel({
           </h2>
         </div>
 
-        <div className="flex items-center gap-2">
-          <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-bold bg-orange-500/15 border border-orange-500/30 text-orange-400">
-            HOST CONTROLLER
-          </span>
+        {/* Tab Selector */}
+        <div className="flex items-center gap-1.5 bg-neutral-950 p-1 rounded-xl border border-neutral-800">
+          <button
+            type="button"
+            onClick={() => setControlMode("qna")}
+            className={`px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold transition-all cursor-pointer flex items-center gap-1 ${
+              controlMode === "qna"
+                ? "bg-orange-500 text-white shadow-sm"
+                : "text-neutral-400 hover:text-white"
+            }`}
+          >
+            <Radio size={12} />
+            <span>Q&A</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setControlMode("activities")}
+            className={`px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold transition-all cursor-pointer flex items-center gap-1 ${
+              controlMode === "activities"
+                ? "bg-orange-500 text-white shadow-sm"
+                : "text-neutral-400 hover:text-white"
+            }`}
+          >
+            <Gamepad2 size={12} />
+            <span>Activities</span>
+          </button>
         </div>
       </div>
 
@@ -185,49 +221,68 @@ export function AdminLiveControlsPanel({
                   No Active Question
                 </h3>
                 <p className="text-xs text-neutral-400 font-medium">
-                  Use the controls below to publish a question or open the Projector Live Wall.
+                  Use the controls below to publish a question, switch to Activities, or open the Projector Live Wall.
                 </p>
               </div>
             </motion.div>
           )}
         </AnimatePresence>
 
-        {/* TWO LARGE ACTION BUTTONS (Admin Control Center) */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 shrink-0 pt-2">
+        {/* THREE LARGE ACTION BUTTONS (Admin Control Center) */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 shrink-0 pt-2">
           {/* Action Button 1: + Ask Question */}
           <button
             type="button"
             onClick={onOpenAskModal}
-            className="group relative p-5 rounded-2xl bg-gradient-to-br from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white font-black transition-all cursor-pointer shadow-xl shadow-orange-500/20 hover:shadow-orange-500/30 hover:scale-[1.02] active:scale-[0.98] border border-orange-400/40 flex flex-col items-center justify-center text-center space-y-2 overflow-hidden"
+            className="group relative p-4 rounded-2xl bg-gradient-to-br from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white font-black transition-all cursor-pointer shadow-xl shadow-orange-500/20 hover:scale-[1.02] active:scale-[0.98] border border-orange-400/40 flex flex-col items-center justify-center text-center space-y-1.5 overflow-hidden"
           >
-            <div className="p-3 rounded-xl bg-white/10 border border-white/20 backdrop-blur-sm group-hover:scale-110 transition-transform">
-              <PlusCircle size={26} className="text-white" />
+            <div className="p-2.5 rounded-xl bg-white/10 border border-white/20 backdrop-blur-sm group-hover:scale-110 transition-transform">
+              <PlusCircle size={22} className="text-white" />
             </div>
             <div>
-              <span className="text-base font-black tracking-tight block">
+              <span className="text-xs font-black tracking-tight block">
                 + Ask Question
               </span>
-              <span className="text-[10px] font-mono text-orange-100/80 uppercase tracking-wider block mt-0.5">
-                Publish live question to all
+              <span className="text-[9px] font-mono text-orange-100/80 uppercase tracking-wider block mt-0.5">
+                Q&A Broadcast
               </span>
             </div>
           </button>
 
-          {/* Action Button 2: 🖥 Live Wall */}
+          {/* Action Button 2: 🧠 Activities */}
+          <button
+            type="button"
+            onClick={() => setControlMode("activities")}
+            className="group relative p-4 rounded-2xl bg-gradient-to-br from-neutral-900 to-neutral-950 hover:from-neutral-850 hover:to-neutral-900 text-white font-black transition-all cursor-pointer shadow-xl shadow-black/40 hover:scale-[1.02] active:scale-[0.98] border border-orange-500/40 hover:border-orange-500/70 flex flex-col items-center justify-center text-center space-y-1.5 overflow-hidden"
+          >
+            <div className="p-2.5 rounded-xl bg-orange-500/15 border border-orange-500/30 text-orange-400 group-hover:scale-110 transition-transform text-lg">
+              🧠
+            </div>
+            <div>
+              <span className="text-xs font-black tracking-tight block">
+                Activities
+              </span>
+              <span className="text-[9px] font-mono text-neutral-400 uppercase tracking-wider block mt-0.5">
+                Quiz & Challenges
+              </span>
+            </div>
+          </button>
+
+          {/* Action Button 3: 🖥 Live Wall */}
           <button
             type="button"
             onClick={onNavigateLiveWall}
-            className="group relative p-5 rounded-2xl bg-gradient-to-br from-neutral-900 to-neutral-950 hover:from-neutral-850 hover:to-neutral-900 text-white font-black transition-all cursor-pointer shadow-xl shadow-black/40 hover:scale-[1.02] active:scale-[0.98] border border-purple-500/40 hover:border-purple-500/70 flex flex-col items-center justify-center text-center space-y-2 overflow-hidden"
+            className="group relative p-4 rounded-2xl bg-gradient-to-br from-neutral-900 to-neutral-950 hover:from-neutral-850 hover:to-neutral-900 text-white font-black transition-all cursor-pointer shadow-xl shadow-black/40 hover:scale-[1.02] active:scale-[0.98] border border-purple-500/40 hover:border-purple-500/70 flex flex-col items-center justify-center text-center space-y-1.5 overflow-hidden"
           >
-            <div className="p-3 rounded-xl bg-purple-500/15 border border-purple-500/30 text-purple-400 group-hover:scale-110 transition-transform">
-              <Tv size={26} />
+            <div className="p-2.5 rounded-xl bg-purple-500/15 border border-purple-500/30 text-purple-400 group-hover:scale-110 transition-transform">
+              <Tv size={22} />
             </div>
             <div>
-              <span className="text-base font-black tracking-tight block flex items-center gap-1.5 justify-center">
-                <span>🖥 Live Wall</span>
+              <span className="text-xs font-black tracking-tight block">
+                Live Wall
               </span>
-              <span className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider block mt-0.5">
-                Open Projector Display Mode
+              <span className="text-[9px] font-mono text-neutral-400 uppercase tracking-wider block mt-0.5">
+                Projector Mode
               </span>
             </div>
           </button>
