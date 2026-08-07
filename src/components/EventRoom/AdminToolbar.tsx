@@ -1,12 +1,21 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Users, HelpCircle, Presentation, Sparkles } from "lucide-react";
 
 interface AdminToolbarProps {
   isAdmin?: boolean;
   onOpenAskModal?: () => void;
+  eventId?: string;
+  onNavigateLiveWall?: () => void;
 }
 
-export function AdminToolbar({ isAdmin = false, onOpenAskModal }: AdminToolbarProps) {
+export function AdminToolbar({
+  isAdmin = false,
+  onOpenAskModal,
+  eventId,
+  onNavigateLiveWall,
+}: AdminToolbarProps) {
+  const navigate = useNavigate();
   const [toastMsg, setToastMsg] = useState<string>("");
 
   if (!isAdmin) return null;
@@ -16,7 +25,20 @@ export function AdminToolbar({ isAdmin = false, onOpenAskModal }: AdminToolbarPr
       onOpenAskModal();
       return;
     }
-    setToastMsg(`${label}: Coming Soon`);
+
+    if (label === "Live Wall Control" || label === "Live Wall") {
+      if (onNavigateLiveWall) {
+        onNavigateLiveWall();
+      } else if (eventId) {
+        navigate(`/events/${eventId}/live-wall`);
+      } else {
+        setToastMsg("Event ID missing for Live Wall");
+        setTimeout(() => setToastMsg(""), 2500);
+      }
+      return;
+    }
+
+    setToastMsg(`${label}`);
     setTimeout(() => {
       setToastMsg("");
     }, 2500);

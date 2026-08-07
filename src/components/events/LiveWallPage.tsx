@@ -1,13 +1,36 @@
-import { useState, useEffect } from "react";
-import { useParams, useNavigate } from "react";
-import { motion } from "motion/react";
-import { Tv, ArrowLeft, Radio, Sparkles, MessageSquare, Clock } from "lucide-react";
+import { useState, useEffect, useRef, useMemo } from "react";
+import { useParams, useNavigate } from "react-router-dom";
+import { motion, AnimatePresence } from "motion/react";
+import { 
+  Tv, 
+  ArrowLeft, 
+  Radio, 
+  Sparkles, 
+  MessageSquare, 
+  Maximize2, 
+  Minimize2, 
+  Flame,
+  Users
+} from "lucide-react";
 import { doc, collection, onSnapshot } from "firebase/firestore";
 import { db } from "../../lib/firebase";
 import { EventItem } from "../PublicEventPage";
 import { ActiveQuestionData, LiveAnswerData } from "../EventRoom/LiveRoomPanel";
 
-export function LiveWallPage() {
+interface AggregatedBubble {
+  key: string;
+  displayText: string;
+  count: number;
+  latestTimestamp: number;
+  isNewOrUpdated: boolean;
+  colorIndex: number;
+}
+
+interface LiveWallPageProps {
+  isAdmin?: boolean;
+}
+
+export function LiveWallPage({ isAdmin }: LiveWallPageProps) {
   const { eventId } = useParams<{ eventId: string }>();
   const navigate = useNavigate();
 
@@ -15,8 +38,36 @@ export function LiveWallPage() {
   const [activeQuestion, setActiveQuestion] = useState<ActiveQuestionData | null>(null);
   const [answers, setAnswers] = useState<LiveAnswerData[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
 
-  // Fetch Event details
+  // Track highlighted bubble keys (for 2-second glow animation on new/updated responses)
+  const [highlightedKeys, setHighlightedKeys] = useState<Set<string>>(new Set());
+  const prevCountsRef = useRef<Map<string, number>>(new Map());
+
+  // Listen to Fullscreen changes
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  }, []);
+
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch((err) => {
+        console.warn("Error attempting to enable fullscreen:", err);
+      });
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen().catch((err) => {
+          console.warn("Error attempting to exit fullscreen:", err);
+        });
+      }
+    }
+  };
+
+  // 1. Listen to Event Details
   useEffect(() => {
     if (!eventId) return;
 
@@ -36,7 +87,7 @@ export function LiveWallPage() {
     return () => unsubEvent();
   }, [eventId]);
 
-  // Fetch Active Question
+  // 2. Listen to Active Question
   useEffect(() => {
     if (!eventId) return;
 
@@ -67,7 +118,7 @@ export function LiveWallPage() {
     return () => unsubQuestion();
   }, [eventId]);
 
-  // Fetch Live Answers
+  // 3. Listen to Live Answers
   useEffect(() => {
     if (!eventId) return;
 
@@ -85,136 +136,341 @@ export function LiveWallPage() {
     return () => unsubAnswers();
   }, [eventId]);
 
+  // Filter matching answers for current active question
   const currentQuestionId = activeQuestion?.questionId || "";
-  const matchingAnswers = currentQuestionId
-    ? answers.filter((a) => a.questionId === currentQuestionId)
-    : [];
+  const matchingAnswers = useMemo(() => {
+    if (!currentQuestionId) return [];
+    return answers.filter((a) => a.questionId === currentQuestionId);
+  }, [answers, currentQuestionId]);
+
+  // Aggregate duplicate responses (normalized, trimmed, case-insensitive)
+  const aggregatedBubbles = useMemo(() => {
+    const map = new Map<string, { displayText: string; count: number; latestTimestamp: number }>();
+
+    matchingAnswers.forEach((ans) => {
+      const rawText = ans.answer || "";
+      const key = rawText.trim().toLowerCase();
+      if (!key) return;
+
+      const existing = map.get(key);
+      const ts = typeof ans.createdAt === "number" ? ans.createdAt : Date.now();
+
+      if (existing) {
+        existing.count += 1;
+        if (ts > existing.latestTimestamp) {
+          existing.latestTimestamp = ts;
+        }
+      } else {
+        map.set(key, {
+          displayText: rawText.trim(),
+          count: 1,
+          latestTimestamp: ts,
+        });
+      }
+    });
+
+    const result: AggregatedBubble[] = [];
+    let idx = 0;
+
+    map.forEach((value, key) => {
+      result.push({
+        key,
+        displayText: value.displayText,
+        count: value.count,
+        latestTimestamp: value.latestTimestamp,
+        isNewOrUpdated: highlightedKeys.has(key),
+        colorIndex: idx % 4,
+      });
+      idx++;
+    });
+
+    // Sort by count descending so most popular responses anchor near center
+    return result.sort((a, b) => b.count - a.count);
+  }, [matchingAnswers, highlightedKeys]);
+
+  // Track changes to trigger 2-second highlight pulse on new or incremented answers
+  useEffect(() => {
+    const newHighlights = new Set<string>();
+    const currentCounts = new Map<string, number>();
+
+    aggregatedBubbles.forEach((b) => {
+      currentCounts.set(b.key, b.count);
+      const prevCount = prevCountsRef.current.get(b.key) || 0;
+
+      if (b.count > prevCount && prevCountsRef.current.size > 0) {
+        newHighlights.add(b.key);
+      }
+    });
+
+    prevCountsRef.current = currentCounts;
+
+    if (newHighlights.size > 0) {
+      setHighlightedKeys((prev) => {
+        const next = new Set(prev);
+        newHighlights.forEach((k) => next.add(k));
+        return next;
+      });
+
+      const timer = setTimeout(() => {
+        setHighlightedKeys((prev) => {
+          const next = new Set(prev);
+          newHighlights.forEach((k) => next.delete(k));
+          return next;
+        });
+      }, 2200);
+
+      return () => clearTimeout(timer);
+    }
+  }, [aggregatedBubbles]);
+
+  // Color theme presets for floating bubbles
+  const bubbleColorStyles = [
+    {
+      // Cyan Glow
+      bg: "bg-gradient-to-br from-cyan-950/80 via-cyan-900/40 to-neutral-950/90",
+      border: "border-cyan-500/50 hover:border-cyan-400",
+      text: "text-cyan-100",
+      countBg: "bg-cyan-500 text-black",
+      glow: "shadow-[0_0_25px_rgba(6,182,212,0.3)]",
+      highlightGlow: "shadow-[0_0_45px_rgba(6,182,212,0.85)] border-cyan-400",
+    },
+    {
+      // Purple Glow
+      bg: "bg-gradient-to-br from-purple-950/80 via-purple-900/40 to-neutral-950/90",
+      border: "border-purple-500/50 hover:border-purple-400",
+      text: "text-purple-100",
+      countBg: "bg-purple-500 text-white",
+      glow: "shadow-[0_0_25px_rgba(168,85,247,0.3)]",
+      highlightGlow: "shadow-[0_0_45px_rgba(168,85,247,0.85)] border-purple-400",
+    },
+    {
+      // Orange Glow
+      bg: "bg-gradient-to-br from-orange-950/80 via-orange-900/40 to-neutral-950/90",
+      border: "border-orange-500/50 hover:border-orange-400",
+      text: "text-orange-100",
+      countBg: "bg-orange-500 text-black",
+      glow: "shadow-[0_0_25px_rgba(249,115,22,0.3)]",
+      highlightGlow: "shadow-[0_0_45px_rgba(249,115,22,0.85)] border-orange-400",
+    },
+    {
+      // Blue Glow
+      bg: "bg-gradient-to-br from-blue-950/80 via-blue-900/40 to-neutral-950/90",
+      border: "border-blue-500/50 hover:border-blue-400",
+      text: "text-blue-100",
+      countBg: "bg-blue-500 text-white",
+      glow: "shadow-[0_0_25px_rgba(59,130,246,0.3)]",
+      highlightGlow: "shadow-[0_0_45px_rgba(59,130,246,0.85)] border-blue-400",
+    },
+  ];
 
   return (
-    <div className="min-h-screen bg-[#070707] text-white flex flex-col font-sans select-none overflow-x-hidden">
-      {/* Top Presentation Bar */}
-      <div className="p-4 sm:p-6 border-b border-neutral-800 bg-[#0c0c0c] flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
+    <div className="min-h-screen h-screen bg-[#050508] text-white flex flex-col font-sans select-none overflow-hidden relative selection:bg-cyan-500 selection:text-black">
+      {/* Ambient Conference Background Lights */}
+      <div className="absolute inset-0 pointer-events-none overflow-hidden">
+        <div className="absolute top-[-10%] left-[-10%] w-[50vw] h-[50vw] bg-purple-600/10 blur-[140px] rounded-full animate-pulse" />
+        <div className="absolute bottom-[-10%] right-[-10%] w-[50vw] h-[50vw] bg-cyan-600/10 blur-[140px] rounded-full animate-pulse" />
+        <div className="absolute top-[40%] right-[30%] w-[35vw] h-[35vw] bg-orange-600/5 blur-[160px] rounded-full" />
+      </div>
+
+      {/* Top Presentation Bar - Minimal & Clean */}
+      <header className="p-4 sm:p-6 bg-neutral-950/80 border-b border-neutral-800/80 backdrop-blur-md flex items-center justify-between gap-4 z-20 shrink-0 relative">
+        {/* Event Title & Branding */}
+        <div className="flex items-center gap-4 min-w-0">
           <button
             type="button"
             onClick={() => navigate(`/events/${eventId}/admin`)}
-            className="p-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-300 hover:text-white transition-all cursor-pointer border border-neutral-800 flex items-center gap-1.5 text-xs font-bold"
+            className="p-2.5 rounded-xl bg-neutral-900/90 hover:bg-neutral-800 text-neutral-400 hover:text-white transition-all cursor-pointer border border-neutral-800 shrink-0 flex items-center gap-2 text-xs font-extrabold"
+            title="Exit to Admin Dashboard"
           >
             <ArrowLeft size={16} />
-            <span className="hidden sm:inline">Admin Dashboard</span>
+            <span className="hidden sm:inline">Admin</span>
           </button>
 
-          <div className="h-5 w-px bg-neutral-800" />
-
-          <div>
-            <h1 className="text-base sm:text-lg font-black text-white tracking-tight leading-none">
+          <div className="min-w-0 text-left">
+            <h1 className="text-lg sm:text-2xl font-black text-white tracking-tight leading-none truncate">
               {event?.title || "ZERO2ONE Live Event Stage"}
             </h1>
-            <p className="text-[11px] font-mono text-neutral-400 mt-1">
-              Projector Display View • {event?.roomType === "normal" ? "Standard Room" : "LinkedIn Sync"}
+            <p className="text-xs font-mono text-neutral-400 mt-1 flex items-center gap-2">
+              <span className="text-cyan-400 font-bold uppercase tracking-wider">
+                {event?.college || "ZERO2ONE Stage"}
+              </span>
+              <span>•</span>
+              <span className="text-neutral-400">{matchingAnswers.length} Responses Submitted</span>
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <span className="px-3 py-1 rounded-full text-xs font-mono font-black uppercase tracking-wider bg-purple-500/20 border border-purple-500/40 text-purple-300 flex items-center gap-1.5">
+        {/* Header Right Stage Controls */}
+        <div className="flex items-center gap-3 shrink-0">
+          <div className="px-3 py-1.5 rounded-full text-xs font-mono font-black uppercase tracking-wider bg-purple-500/15 border border-purple-500/30 text-purple-300 flex items-center gap-2">
             <Tv size={14} className="text-purple-400" />
-            <span>LIVE WALL</span>
-          </span>
-        </div>
-      </div>
+            <span className="hidden sm:inline">PROJECTOR VIEW</span>
+          </div>
 
-      {/* Main Screen Body */}
-      <div className="flex-1 p-6 sm:p-10 max-w-6xl mx-auto w-full flex flex-col justify-center space-y-8">
+          <div className="px-3 py-1.5 rounded-full text-xs font-mono font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 flex items-center gap-1.5">
+            <Radio size={13} className="animate-pulse" />
+            <span className="hidden sm:inline">LIVE SYNC</span>
+          </div>
+
+          <button
+            type="button"
+            onClick={toggleFullscreen}
+            className="p-2.5 rounded-xl bg-neutral-900/90 hover:bg-neutral-800 text-neutral-300 hover:text-white transition-all border border-neutral-800 cursor-pointer flex items-center gap-1.5 text-xs font-extrabold"
+            title={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
+          >
+            {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+            <span className="hidden md:inline">{isFullscreen ? "Exit Fullscreen" : "Fullscreen"}</span>
+          </button>
+        </div>
+      </header>
+
+      {/* Main Presentation Stage */}
+      <main className="flex-1 flex flex-col justify-between p-4 sm:p-8 z-10 relative overflow-hidden">
         {loading ? (
-          <div className="py-20 text-center space-y-3">
-            <div className="w-8 h-8 border-2 border-orange-500 border-t-transparent rounded-full animate-spin mx-auto" />
-            <p className="text-xs font-mono text-neutral-400">Loading Stage Display...</p>
+          <div className="my-auto text-center space-y-4">
+            <div className="w-10 h-10 border-3 border-cyan-500 border-t-transparent rounded-full animate-spin mx-auto" />
+            <p className="text-sm font-mono text-neutral-400">Syncing Stage Presentation...</p>
           </div>
         ) : activeQuestion && activeQuestion.question ? (
-          <div className="space-y-8">
-            {/* Display Active Question */}
+          <AnimatePresence mode="wait">
             <motion.div
-              initial={{ opacity: 0, scale: 0.96 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="p-8 sm:p-10 rounded-3xl bg-gradient-to-br from-neutral-900 via-[#111111] to-neutral-950 border-2 border-orange-500/50 shadow-2xl relative overflow-hidden"
+              key={currentQuestionId}
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -15 }}
+              transition={{ duration: 0.4 }}
+              className="flex-1 flex flex-col justify-between h-full"
             >
-              <div className="absolute top-0 right-0 w-64 h-64 bg-orange-500/10 blur-3xl rounded-full pointer-events-none" />
+              {/* STAGE ACTIVE QUESTION BANNER */}
+              <div className="max-w-4xl mx-auto w-full text-center space-y-3 pt-2 sm:pt-4 shrink-0">
+                <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full text-xs font-mono font-black uppercase tracking-widest text-orange-400 bg-orange-500/15 border border-orange-500/30">
+                  <Sparkles size={14} className="text-orange-400" />
+                  <span>CURRENT STAGE QUESTION</span>
+                </div>
 
-              <div className="flex items-center justify-between mb-4">
-                <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-mono font-black uppercase tracking-wider bg-orange-500/20 text-orange-400 border border-orange-500/40">
-                  <Sparkles size={14} />
-                  STAGE QUESTION
-                </span>
-
-                <span className="text-xs font-mono text-emerald-400 flex items-center gap-1.5">
-                  <Radio size={14} className="animate-pulse" />
-                  REAL-TIME SYNC
-                </span>
+                <h2 className="text-2xl sm:text-4xl md:text-5xl font-black text-white tracking-tight leading-tight drop-shadow-lg px-4">
+                  "{activeQuestion.question}"
+                </h2>
               </div>
 
-              <h2 className="text-2xl sm:text-4xl font-black text-white tracking-tight leading-tight">
-                {activeQuestion.question}
-              </h2>
+              {/* FLOATING RESPONSE BUBBLE CLOUD STAGE */}
+              <div className="flex-1 relative w-full my-4 flex items-center justify-center overflow-hidden min-h-[350px]">
+                {aggregatedBubbles.length === 0 ? (
+                  /* FALLBACK: WAITING FOR RESPONSES */
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="flex flex-col items-center justify-center text-center p-8 space-y-4 max-w-md mx-auto"
+                  >
+                    <div className="relative">
+                      <div className="w-20 h-20 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 flex items-center justify-center animate-pulse">
+                        <MessageSquare size={36} />
+                      </div>
+                      <div className="absolute inset-0 rounded-full border border-cyan-500/20 animate-ping" />
+                    </div>
 
-              <div className="mt-6 pt-4 border-t border-neutral-800/80 flex items-center justify-between">
-                <span className="text-sm font-mono font-bold text-orange-400 flex items-center gap-2">
-                  <MessageSquare size={16} />
-                  {matchingAnswers.length} Responses Submitted
-                </span>
+                    <div className="space-y-1">
+                      <h3 className="text-xl font-black text-white">Waiting for responses...</h3>
+                      <p className="text-xs font-mono text-neutral-400">
+                        Participant responses will appear here live as floating bubbles.
+                      </p>
+                    </div>
+                  </motion.div>
+                ) : (
+                  /* FLOATING BUBBLE CLOUD DISPLAY */
+                  <div className="relative w-full h-full flex items-center justify-center max-w-6xl mx-auto">
+                    {aggregatedBubbles.map((bubble, index) => {
+                      // Golden ratio spiral positioning distribution
+                      const count = aggregatedBubbles.length;
+                      const phi = 137.5 * (Math.PI / 180);
+                      const radiusFactor = Math.min(260, 40 + Math.sqrt(index + 1) * 55);
+                      const angle = (index + 1) * phi;
+
+                      const posX = Math.cos(angle) * radiusFactor;
+                      const posY = Math.sin(angle) * (radiusFactor * 0.62);
+
+                      // Floating keyframe offsets
+                      const floatX = (index % 2 === 0 ? 1 : -1) * (10 + (index % 4) * 4);
+                      const floatY = (index % 3 === 0 ? -1 : 1) * (12 + (index % 3) * 5);
+                      const duration = 5 + (index % 5) * 1.2;
+
+                      // Size calculation based on frequency
+                      const baseScale = 1 + Math.min(0.6, (bubble.count - 1) * 0.12);
+
+                      const style = bubbleColorStyles[bubble.colorIndex];
+
+                      return (
+                        <motion.div
+                          key={bubble.key}
+                          initial={{ opacity: 0, scale: 0.3, x: 0, y: 0 }}
+                          animate={{
+                            opacity: 1,
+                            scale: bubble.isNewOrUpdated ? [baseScale * 1.4, baseScale] : baseScale,
+                            x: [posX, posX + floatX, posX - floatX, posX],
+                            y: [posY, posY + floatY, posY - floatY, posY],
+                          }}
+                          transition={{
+                            opacity: { duration: 0.5 },
+                            scale: { duration: bubble.isNewOrUpdated ? 0.8 : 0.4 },
+                            x: { duration, repeat: Infinity, ease: "easeInOut" },
+                            y: { duration: duration * 1.1, repeat: Infinity, ease: "easeInOut" },
+                          }}
+                          className={`absolute px-5 py-3.5 rounded-full border ${style.bg} ${style.border} ${style.text} ${
+                            bubble.isNewOrUpdated ? style.highlightGlow : style.glow
+                          } backdrop-blur-md flex items-center gap-2.5 transition-shadow cursor-default group shadow-2xl z-10`}
+                          style={{
+                            transformOrigin: "center center",
+                          }}
+                        >
+                          <span className="text-base sm:text-lg md:text-xl font-extrabold tracking-tight whitespace-nowrap">
+                            {bubble.displayText}
+                          </span>
+
+                          {/* Multiplier Tag if count > 1 */}
+                          {bubble.count > 1 && (
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-xs font-mono font-black tracking-wider ${style.countBg} flex items-center gap-1 shadow-md`}
+                            >
+                              <Flame size={12} className="animate-pulse" />
+                              <span>×{bubble.count}</span>
+                            </span>
+                          )}
+                        </motion.div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* FOOTER STATS STRIP */}
+              <div className="pt-3 border-t border-neutral-800/80 flex items-center justify-between text-xs font-mono text-neutral-400 shrink-0">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping" />
+                  <span className="text-white font-bold">{aggregatedBubbles.length} Unique Responses</span>
+                </div>
+
+                <div className="text-neutral-500 hidden sm:block">
+                  ZERO2ONE Interactive Stage System
+                </div>
               </div>
             </motion.div>
-
-            {/* Live Responses Stream Grid */}
-            <div className="space-y-4">
-              <h3 className="text-xs font-mono font-black uppercase tracking-widest text-neutral-400">
-                Live Responses Stream
-              </h3>
-
-              {matchingAnswers.length === 0 ? (
-                <div className="p-8 rounded-2xl bg-neutral-900/60 border border-neutral-800 text-center text-neutral-500 text-xs font-mono">
-                  Waiting for participant submissions...
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {matchingAnswers.map((ans, idx) => (
-                    <motion.div
-                      key={ans.id || idx}
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="p-4 rounded-2xl bg-neutral-900 border border-neutral-800 space-y-2 text-left"
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-black text-orange-400 truncate">
-                          {ans.participantName}
-                        </span>
-                        <span className="text-[10px] font-mono text-neutral-500">
-                          #{idx + 1}
-                        </span>
-                      </div>
-                      <p className="text-sm text-white font-medium leading-relaxed">
-                        "{ans.answer}"
-                      </p>
-                    </motion.div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
+          </AnimatePresence>
         ) : (
-          <div className="py-16 p-8 rounded-3xl bg-neutral-900/60 border border-neutral-800 text-center space-y-4">
-            <div className="w-16 h-16 rounded-2xl bg-purple-500/10 border border-purple-500/30 text-purple-400 flex items-center justify-center mx-auto">
+          /* IDLE STAGE STATE */
+          <div className="my-auto text-center space-y-5 max-w-lg mx-auto p-8 rounded-3xl bg-neutral-900/60 border border-neutral-800">
+            <div className="w-16 h-16 rounded-2xl bg-purple-500/15 border border-purple-500/30 text-purple-400 flex items-center justify-center mx-auto shadow-xl">
               <Tv size={32} />
             </div>
-            <div className="space-y-1 max-w-md mx-auto">
-              <h2 className="text-xl font-black text-white">Projector Display Ready</h2>
-              <p className="text-xs text-neutral-400 font-medium">
-                No active question currently broadcasted. Questions published from the Admin Dashboard will appear here live.
+
+            <div className="space-y-2">
+              <h2 className="text-2xl font-black text-white tracking-tight">Projector Display Ready</h2>
+              <p className="text-xs font-mono text-neutral-400 leading-relaxed">
+                No question is currently broadcast on stage. When the host publishes a question from the Admin Dashboard, it will appear here in real time.
               </p>
             </div>
           </div>
         )}
-      </div>
+      </main>
     </div>
   );
 }

@@ -5314,7 +5314,7 @@ export default function App() {
                 <Route path="/events/:eventId/onboarding" element={<ParticipantOnboardingPage />} />
                 <Route path="/events/:eventId/room" element={<EventRoomPage currentUserEmail={user?.email} currentUserId={user?.uid} isAdmin={isAdmin} />} />
                 <Route path="/events/:eventId/admin" element={isAdmin ? <AdminEventDashboardPage currentUserEmail={user?.email} currentUserId={user?.uid} isAdmin={isAdmin} /> : <UnauthorizedAdminPage />} />
-                <Route path="/events/:eventId/live-wall" element={<LiveWallPage />} />
+                <Route path="/events/:eventId/live-wall" element={isAdmin ? <LiveWallPage isAdmin={isAdmin} /> : <UnauthorizedAdminPage />} />
                 <Route path="/events/:eventId/participant/:participantId" element={<ParticipantProfilePage />} />
 
                 {/* Protect Admin Event Routes */}

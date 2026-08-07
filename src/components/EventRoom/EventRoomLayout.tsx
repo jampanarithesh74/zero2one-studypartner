@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Users, Radio, MessageSquare } from "lucide-react";
 import { EventItem } from "../PublicEventPage";
 import { Participant } from "../ParticipantOnboarding";
@@ -45,6 +46,7 @@ export function EventRoomLayout({
   onCopyShareLink,
   onConnectClick,
 }: EventRoomLayoutProps) {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<"participants" | "live" | "chat">("live");
   const [isAskModalOpen, setIsAskModalOpen] = useState<boolean>(false);
 
@@ -56,6 +58,7 @@ export function EventRoomLayout({
         participantCount={participants.length}
         isAdmin={isAdmin}
         onOpenAskModal={() => setIsAskModalOpen(true)}
+        onNavigateLiveWall={() => navigate(`/events/${event.id}/live-wall`)}
         onBackToEvent={onBackToEvent}
         onNavigateHome={onNavigateHome}
         onCopyShareLink={onCopyShareLink}
