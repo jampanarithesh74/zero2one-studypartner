@@ -128,7 +128,7 @@ export default function App() {
              (upperUri === "CS" && d === "Computer Science and Engineering") ||
              (upperUri === "IT" && d === "Information Technology") ||
              (upperUri === "AI" && d === "Artificial Intelligence") ||
-             (upperUri === "AIML" && d === "AI & Machine Learning") ||
+             (upperUri === "AIML" && (d === "Artificial Intelligence & Machine Learning" || d.includes("Machine Learning"))) ||
              (upperUri === "DATA SCIENCE" && d === "CSE (Data Science)") ||
              (upperUri === "CYBER SECURITY" && d === "CSE (Cyber Security)") ||
              (upperUri === "EEE" && d === "Electrical & Electronics Engineering") ||
@@ -140,14 +140,73 @@ export default function App() {
   };
 
   // Helper: Look up static or dynamic syllabus subject by customized code
-  const findSubjectByCode = (code: string | undefined) => {
+  const findSubjectByCode = (code: string | undefined, preferDept?: string | null) => {
     if (!code) return null;
-    const upperCode = code.toUpperCase();
-    
-    // 1. Search in main static SYLLABUS_MAP first to find exact department and semester
+    const upperCode = code.toUpperCase().trim();
+
+    // Resolve target department from preferDept parameter, or fallback to currently active selectedDept
+    const targetDept = preferDept 
+      ? resolveDepartment(preferDept) 
+      : (selectedDept ? resolveDepartment(selectedDept) : null);
+
+    // 1. If targetDept is specified, search static SYLLABUS_MAP for targetDept first
+    if (targetDept && SYLLABUS_MAP[targetDept]) {
+      for (const sem in SYLLABUS_MAP[targetDept]) {
+        const sub = SYLLABUS_MAP[targetDept][sem].find(s => s.code.toUpperCase().trim() === upperCode);
+        if (sub) {
+          const detail = (SUBJECT_DETAILS[upperCode] || {}) as any;
+          return {
+            code: upperCode,
+            title: sub.title || detail.title || "Subject",
+            isStatic: true,
+            semester: Number(sem),
+            department: targetDept,
+            ...detail
+          };
+        }
+      }
+    }
+
+    // 2. If targetDept is specified, search fallback syllabus list for targetDept
+    if (targetDept) {
+      for (let sem = 1; sem <= 8; sem++) {
+        const fallbacks = getFallbackSyllabusList(targetDept, sem);
+        const sub = fallbacks.find(s => s.code.toUpperCase().trim() === upperCode);
+        if (sub) {
+          const detail = (SUBJECT_DETAILS[upperCode] || {}) as any;
+          return {
+            code: upperCode,
+            title: sub.title || detail.title || "Subject",
+            isStatic: true,
+            semester: sem,
+            department: targetDept,
+            ...detail
+          };
+        }
+      }
+    }
+
+    // 3. If targetDept is specified, search in dynamic subjects for targetDept
+    if (targetDept && dynamicSubjects && dynamicSubjects.length > 0) {
+      const dyn = dynamicSubjects.find(s => 
+        ((s.subjectCode || s.code || s.id || "").toUpperCase().trim() === upperCode) &&
+        (s.linked_departments?.some((d: string) => resolveDepartment(d) === targetDept) || resolveDepartment(s.department) === targetDept)
+      );
+      if (dyn) {
+        return {
+          code: upperCode,
+          title: dyn.title || dyn.subjectName || "Custom Subject",
+          isStatic: false,
+          semester: dyn.semester,
+          department: targetDept
+        };
+      }
+    }
+
+    // 4. Global Fallback: Search in static SYLLABUS_MAP across all departments
     for (const dept in SYLLABUS_MAP) {
       for (const sem in SYLLABUS_MAP[dept]) {
-        const sub = SYLLABUS_MAP[dept][sem].find(s => s.code === upperCode);
+        const sub = SYLLABUS_MAP[dept][sem].find(s => s.code.toUpperCase().trim() === upperCode);
         if (sub) {
           const detail = (SUBJECT_DETAILS[upperCode] || {}) as any;
           return {
@@ -162,11 +221,11 @@ export default function App() {
       }
     }
 
-    // 2. Search in fallback syllabus lists
+    // 5. Global Fallback: Search in fallback syllabus lists across all departments
     for (const dept of DEPARTMENTS) {
-      for (let sem = 3; sem <= 8; sem++) {
+      for (let sem = 1; sem <= 8; sem++) {
         const fallbacks = getFallbackSyllabusList(dept, sem);
-        const sub = fallbacks.find(s => s.code === upperCode);
+        const sub = fallbacks.find(s => s.code.toUpperCase().trim() === upperCode);
         if (sub) {
           const detail = (SUBJECT_DETAILS[upperCode] || {}) as any;
           return {
@@ -181,27 +240,31 @@ export default function App() {
       }
     }
 
-    // 3. Search in SUBJECT_DETAILS directly as fallback
+    // 6. Global Fallback: Search in SUBJECT_DETAILS directly
     if (SUBJECT_DETAILS[upperCode]) {
       return {
         code: upperCode,
         title: SUBJECT_DETAILS[upperCode].title,
         isStatic: true,
+        department: targetDept || selectedDept || "Information Technology",
         ...SUBJECT_DETAILS[upperCode]
       };
     }
 
-    // 4. Search in dynamic subjects from Firestore
-    const dyn = dynamicSubjects.find(s => s.subjectCode === upperCode || s.code === upperCode || s.id === upperCode);
-    if (dyn) {
-      return {
-        code: upperCode,
-        title: dyn.title || dyn.subjectName || "Custom Subject",
-        isStatic: false,
-        semester: dyn.semester,
-        department: dyn.linked_departments?.[0] || selectedDept
-      };
+    // 7. Global Fallback: Search in dynamic subjects from Firestore
+    if (dynamicSubjects && dynamicSubjects.length > 0) {
+      const dyn = dynamicSubjects.find(s => (s.subjectCode || s.code || s.id || "").toUpperCase().trim() === upperCode);
+      if (dyn) {
+        return {
+          code: upperCode,
+          title: dyn.title || dyn.subjectName || "Custom Subject",
+          isStatic: false,
+          semester: dyn.semester,
+          department: dyn.linked_departments?.[0] || targetDept || selectedDept
+        };
+      }
     }
+
     return null;
   };
 
@@ -228,11 +291,79 @@ export default function App() {
         return;
       }
 
-      // 1. Matches `/subject/:subjectCode/resources`
+      // 1a. Matches `/subject/:dept/:subjectCode/resources`
+      const matchSubNotesDept = matchPath("/subject/:dept/:subjectCode/resources", pathname);
+      if (matchSubNotesDept) {
+        setIsRoute404(false);
+        const rawDept = matchSubNotesDept.params.dept;
+        const rawCode = matchSubNotesDept.params.subjectCode;
+        const resolvedDept = resolveDepartment(rawDept);
+
+        if (resolvedDept) {
+          setSelectedDept(resolvedDept);
+        }
+
+        if (rawCode === "all") {
+          setActiveSubject(null);
+          setExpandedUnit(null);
+          setViewState("resources-view");
+          setResourceTab("notes");
+          return;
+        }
+
+        const found = findSubjectByCode(rawCode, resolvedDept || selectedDept);
+        if (found) {
+          if (resolvedDept) {
+            setSelectedDept(resolvedDept);
+          } else if (found.department) {
+            setSelectedDept(found.department);
+          }
+          if (found.semester) {
+            setSelectedSem(found.semester);
+          }
+          setActiveSubject(found.code);
+          setViewState("resources-view");
+          setResourceTab("notes");
+        } else {
+          setActiveSubject(rawCode.toUpperCase());
+          setViewState("resources-view");
+          setResourceTab("notes");
+        }
+        return;
+      }
+
+      // 1b. Matches `/subject/:dept/resources`
+      const matchDeptNotes = matchPath("/subject/:dept/resources", pathname);
+      if (matchDeptNotes) {
+        setIsRoute404(false);
+        const rawDept = matchDeptNotes.params.dept;
+        const resolvedDept = resolveDepartment(rawDept);
+        if (resolvedDept) {
+          setSelectedDept(resolvedDept);
+        }
+        setActiveSubject(null);
+        setExpandedUnit(null);
+        setViewState("resources-view");
+        setResourceTab("notes");
+        return;
+      }
+
+      // 1c. Matches `/subject/:subjectCode/resources` (legacy/un-scoped)
       const matchSubNotes = matchPath("/subject/:subjectCode/resources", pathname);
       if (matchSubNotes) {
         setIsRoute404(false);
         const rawCode = matchSubNotes.params.subjectCode;
+
+        const deptAsCode = resolveDepartment(rawCode);
+        if (deptAsCode) {
+          setSelectedDept(deptAsCode);
+          setActiveSubject(null);
+          setExpandedUnit(null);
+          setViewState("resources-view");
+          setResourceTab("notes");
+          return;
+        }
+
         if (rawCode === "all") {
           setActiveSubject(null);
           setExpandedUnit(null);
@@ -240,25 +371,99 @@ export default function App() {
           setResourceTab("notes");
           return;
         }
-        const found = findSubjectByCode(rawCode);
+
+        const found = findSubjectByCode(rawCode, selectedDept);
         if (found) {
-          setSelectedDept(found.department || selectedDept);
-          setSelectedSem(found.semester || selectedSem);
+          if (!selectedDept && found.department) {
+            setSelectedDept(found.department);
+          }
+          if (found.semester) {
+            setSelectedSem(found.semester);
+          }
           setActiveSubject(found.code);
           setViewState("resources-view");
           setResourceTab("notes");
         } else {
           setActiveSubject(rawCode.toUpperCase());
           setViewState("resources-view");
+          setResourceTab("notes");
         }
         return;
       }
 
-      // 2. Matches `/subject/:subjectCode/pyqs`
+      // 2a. Matches `/subject/:dept/:subjectCode/pyqs`
+      const matchSubPyqsDept = matchPath("/subject/:dept/:subjectCode/pyqs", pathname);
+      if (matchSubPyqsDept) {
+        setIsRoute404(false);
+        const rawDept = matchSubPyqsDept.params.dept;
+        const rawCode = matchSubPyqsDept.params.subjectCode;
+        const resolvedDept = resolveDepartment(rawDept);
+
+        if (resolvedDept) {
+          setSelectedDept(resolvedDept);
+        }
+
+        if (rawCode === "all") {
+          setActiveSubject(null);
+          setExpandedUnit(null);
+          setViewState("resources-view");
+          setResourceTab("pyqs");
+          return;
+        }
+
+        const found = findSubjectByCode(rawCode, resolvedDept || selectedDept);
+        if (found) {
+          if (resolvedDept) {
+            setSelectedDept(resolvedDept);
+          } else if (found.department) {
+            setSelectedDept(found.department);
+          }
+          if (found.semester) {
+            setSelectedSem(found.semester);
+          }
+          setActiveSubject(found.code);
+          setViewState("resources-view");
+          setResourceTab("pyqs");
+        } else {
+          setActiveSubject(rawCode.toUpperCase());
+          setViewState("resources-view");
+          setResourceTab("pyqs");
+        }
+        return;
+      }
+
+      // 2b. Matches `/subject/:dept/pyqs`
+      const matchDeptPyqs = matchPath("/subject/:dept/pyqs", pathname);
+      if (matchDeptPyqs) {
+        setIsRoute404(false);
+        const rawDept = matchDeptPyqs.params.dept;
+        const resolvedDept = resolveDepartment(rawDept);
+        if (resolvedDept) {
+          setSelectedDept(resolvedDept);
+        }
+        setActiveSubject(null);
+        setExpandedUnit(null);
+        setViewState("resources-view");
+        setResourceTab("pyqs");
+        return;
+      }
+
+      // 2c. Matches `/subject/:subjectCode/pyqs` (legacy)
       const matchSubPyqs = matchPath("/subject/:subjectCode/pyqs", pathname);
       if (matchSubPyqs) {
         setIsRoute404(false);
         const rawCode = matchSubPyqs.params.subjectCode;
+
+        const deptAsCode = resolveDepartment(rawCode);
+        if (deptAsCode) {
+          setSelectedDept(deptAsCode);
+          setActiveSubject(null);
+          setExpandedUnit(null);
+          setViewState("resources-view");
+          setResourceTab("pyqs");
+          return;
+        }
+
         if (rawCode === "all") {
           setActiveSubject(null);
           setExpandedUnit(null);
@@ -266,29 +471,79 @@ export default function App() {
           setResourceTab("pyqs");
           return;
         }
-        const found = findSubjectByCode(rawCode);
+
+        const found = findSubjectByCode(rawCode, selectedDept);
         if (found) {
-          setSelectedDept(found.department || selectedDept);
-          setSelectedSem(found.semester || selectedSem);
+          if (!selectedDept && found.department) {
+            setSelectedDept(found.department);
+          }
+          if (found.semester) {
+            setSelectedSem(found.semester);
+          }
           setActiveSubject(found.code);
           setViewState("resources-view");
           setResourceTab("pyqs");
         } else {
           setActiveSubject(rawCode.toUpperCase());
           setViewState("resources-view");
+          setResourceTab("pyqs");
         }
         return;
       }
 
-      // 3. Matches `/subject/:subjectCode`
+      // 3a. Matches `/subject/:dept/:subjectCode`
+      const matchSubSyllabusDept = matchPath("/subject/:dept/:subjectCode", pathname);
+      if (matchSubSyllabusDept) {
+        setIsRoute404(false);
+        const rawDept = matchSubSyllabusDept.params.dept;
+        const rawCode = matchSubSyllabusDept.params.subjectCode;
+        const resolvedDept = resolveDepartment(rawDept);
+
+        if (resolvedDept) {
+          setSelectedDept(resolvedDept);
+        }
+
+        const found = findSubjectByCode(rawCode, resolvedDept || selectedDept);
+        if (found) {
+          if (resolvedDept) {
+            setSelectedDept(resolvedDept);
+          } else if (found.department) {
+            setSelectedDept(found.department);
+          }
+          if (found.semester) {
+            setSelectedSem(found.semester);
+          }
+          setActiveSubject(found.code);
+          setViewState("syllabus-view");
+        } else {
+          setActiveSubject(rawCode.toUpperCase());
+          setViewState("syllabus-view");
+        }
+        return;
+      }
+
+      // 3b. Matches `/subject/:subjectCode` (legacy)
       const matchSubSyllabus = matchPath("/subject/:subjectCode", pathname);
       if (matchSubSyllabus) {
         setIsRoute404(false);
         const rawCode = matchSubSyllabus.params.subjectCode;
-        const found = findSubjectByCode(rawCode);
+
+        const deptAsCode = resolveDepartment(rawCode);
+        if (deptAsCode) {
+          setSelectedDept(deptAsCode);
+          setActiveSubject(null);
+          setViewState("resources-view");
+          return;
+        }
+
+        const found = findSubjectByCode(rawCode, selectedDept);
         if (found) {
-          setSelectedDept(found.department || selectedDept);
-          setSelectedSem(found.semester || selectedSem);
+          if (!selectedDept && found.department) {
+            setSelectedDept(found.department);
+          }
+          if (found.semester) {
+            setSelectedSem(found.semester);
+          }
           setActiveSubject(found.code);
           setViewState("syllabus-view");
         } else {
@@ -3487,7 +3742,7 @@ export default function App() {
           <motion.button
             whileHover={{ scale: 1.015, y: -2 }}
             whileTap={{ scale: 0.985 }}
-            onClick={() => navigate("/subject/all/resources")}
+            onClick={() => navigate(`/subject/${encodeURIComponent(selectedDept || "all")}/resources`)}
             className="group relative flex flex-col justify-between p-6 md:p-8 rounded-[28px] bg-white border border-neutral-100 hover:border-orange-500/50 hover:shadow-[0_0_25px_rgba(249,115,22,0.06)] transition-all duration-300 text-left w-full cursor-pointer shadow-sm overflow-hidden"
           >
             <div className="absolute inset-0 bg-gradient-to-r from-orange-500/0 via-orange-500/[0.01]/70 to-orange-500/0 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
@@ -3600,7 +3855,7 @@ export default function App() {
                     initial={{ opacity: 0, y: 15 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: index * 0.05 }}
-                    onClick={() => navigate(`/subject/${subject.code}/resources`)}
+                    onClick={() => navigate(`/subject/${encodeURIComponent(selectedDept || "all")}/${subject.code}/resources`)}
                     whileHover={{ scale: 1.012, y: -1.5 }}
                     whileTap={{ scale: 0.985 }}
                     className="p-4 md:p-5 rounded-[18px] bg-white border border-neutral-105 hover:border-orange-500/40 hover:shadow-[0_0_20px_rgba(249,115,22,0.04)] transition-all duration-300 text-left flex flex-col justify-between h-[155px] md:h-[185px] group relative shadow-sm overflow-hidden animate-fadeIn"
@@ -3648,7 +3903,7 @@ export default function App() {
                 <p className="text-xs text-neutral-400 max-w-sm">The subject code <span className="font-mono text-red-600 font-semibold bg-red-50 px-1.5 py-0.5 rounded border border-red-100">{activeSubject}</span> was not found in our database.</p>
               </div>
               <button 
-                onClick={() => navigate("/subject/all/resources")}
+                onClick={() => navigate(`/subject/${encodeURIComponent(selectedDept || "all")}/resources`)}
                 className="px-4 py-2 bg-neutral-100 hover:bg-neutral-200 transition-colors text-xs font-bold text-neutral-800 rounded-xl border border-neutral-200 cursor-pointer shadow-sm"
               >
                 Go Back to All Subjects
@@ -3664,7 +3919,7 @@ export default function App() {
                   {/* Small inline badge */}
                   <div className="flex items-center gap-2">
                     <button 
-                      onClick={() => navigate("/subject/all/resources")}
+                      onClick={() => navigate(`/subject/${encodeURIComponent(selectedDept || "all")}/resources`)}
                       className="text-[10px] md:text-xs font-bold text-neutral-400 hover:text-orange-500 transition-colors flex items-center gap-1 font-sans"
                     >
                       <ArrowLeft size={12} /> ALL SUBJECTS
@@ -3682,7 +3937,7 @@ export default function App() {
                 <div className="flex bg-neutral-100 p-1 rounded-2xl border border-neutral-200/40 w-full sm:w-auto self-start shrink-0">
                   <motion.button 
                     whileTap={{ scale: 0.98 }}
-                    onClick={() => navigate(`/subject/${activeSubject}/resources`)}
+                    onClick={() => navigate(`/subject/${encodeURIComponent(selectedDept || "all")}/${activeSubject}/resources`)}
                     className={`flex-1 sm:flex-none px-6 py-2.5 rounded-xl text-xs md:text-sm font-extrabold transition-all duration-300 text-center ${
                       resourceTab === "notes" 
                         ? "bg-white text-orange-600 shadow-sm font-black border border-neutral-100" 
@@ -3693,7 +3948,7 @@ export default function App() {
                   </motion.button>
                   <motion.button 
                     whileTap={{ scale: 0.98 }}
-                    onClick={() => navigate(`/subject/${activeSubject}/pyqs`)}
+                    onClick={() => navigate(`/subject/${encodeURIComponent(selectedDept || "all")}/${activeSubject}/pyqs`)}
                     className={`flex-1 sm:flex-none px-6 py-2.5 rounded-xl text-xs md:text-sm font-extrabold transition-all duration-300 text-center ${
                       resourceTab === "pyqs" 
                         ? "bg-white text-orange-600 shadow-sm font-black border border-neutral-100" 
@@ -4875,7 +5130,7 @@ export default function App() {
                   return (
                     <motion.button
                       key={subject.code}
-                      onClick={() => navigate(`/subject/${subject.code}`)}
+                      onClick={() => navigate(`/subject/${encodeURIComponent(selectedDept || "all")}/${subject.code}`)}
                       whileHover={{ scale: 1.01 }}
                       whileTap={{ scale: 0.99 }}
                       className={`w-full flex items-start justify-between p-4 rounded-2xl border transition-all text-left relative overflow-hidden ${
@@ -4933,7 +5188,7 @@ export default function App() {
                         return (
                           <tr 
                             key={subject.code} 
-                            onClick={() => navigate(`/subject/${subject.code}`)} 
+                            onClick={() => navigate(`/subject/${encodeURIComponent(selectedDept || "all")}/${subject.code}`)} 
                             className={`cursor-pointer transition-all ${
                               isSelected 
                                 ? "bg-orange-50/10 text-orange-900 border-l-4 border-l-orange-500" 
