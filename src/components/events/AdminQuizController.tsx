@@ -22,7 +22,11 @@ import {
   updateDoc, 
   getDocs, 
   deleteDoc, 
-  serverTimestamp 
+  serverTimestamp,
+  query,
+  orderBy,
+  limit,
+  writeBatch
 } from "firebase/firestore";
 import { db } from "../../lib/firebase";
 import { DEMO_QUIZ_QUESTIONS, QuizSessionData, QuizLeaderboardEntry } from "../../data/quizQuestions";
@@ -43,7 +47,6 @@ export function AdminQuizController({
   const [session, setSession] = useState<QuizSessionData | null>(null);
   const [leaderboard, setLeaderboard] = useState<QuizLeaderboardEntry[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
-  const [responseCount, setResponseCount] = useState<number>(0);
   const [toastMsg, setToastMsg] = useState<string>("");
   const [timeRemaining, setTimeRemaining] = useState<number>(30);
 
@@ -80,14 +83,15 @@ export function AdminQuizController({
     return () => unsubSession();
   }, [eventId]);
 
-  // 2. Listen to Leaderboard
+  // 2. Listen to Leaderboard (Top 10)
   useEffect(() => {
     if (!eventId) return;
 
     const leaderboardRef = collection(db, "events", eventId, "activities", "quiz", "leaderboard");
+    const qLb = query(leaderboardRef, orderBy("currentScore", "desc"), limit(10));
 
     const unsubLeaderboard = onSnapshot(
-      leaderboardRef,
+      qLb,
       (snapshot) => {
         const list: QuizLeaderboardEntry[] = [];
         snapshot.forEach((docSnap) => {
@@ -102,36 +106,6 @@ export function AdminQuizController({
 
     return () => unsubLeaderboard();
   }, [eventId]);
-
-  // 3. Listen to Responses Count for Current Question
-  useEffect(() => {
-    if (!eventId || !session || session.status !== "running") {
-      setResponseCount(0);
-      return;
-    }
-
-    const responsesRef = collection(db, "events", eventId, "activities", "quiz", "responses");
-
-    const unsubResponses = onSnapshot(
-      responsesRef,
-      (snapshot) => {
-        let count = 0;
-        const qKey = `question${session.currentQuestionIndex}`;
-        snapshot.forEach((docSnap) => {
-          const data = docSnap.data();
-          if (data && data[qKey] !== undefined) {
-            count++;
-          }
-        });
-        setResponseCount(count);
-      },
-      (error) => {
-        console.warn("Quiz responses listener error:", error);
-      }
-    );
-
-    return () => unsubResponses();
-  }, [eventId, session?.currentQuestionIndex, session?.status]);
 
   // Reset timer zero tracker on question change
   useEffect(() => {
@@ -199,8 +173,8 @@ export function AdminQuizController({
 
       let fastestTime = 999;
 
-      // 2. Score each participant response
-      const promises: Promise<void>[] = [];
+      // Collect all leaderboard updates
+      const updates: { ref: ReturnType<typeof doc>; data: QuizLeaderboardEntry }[] = [];
 
       respSnap.forEach((docSnap) => {
         const data = docSnap.data();
@@ -225,7 +199,7 @@ export function AdminQuizController({
           };
         }
 
-        // Update leaderboard entry in Firestore
+        // Prepare leaderboard entry in Firestore
         const lbDocRef = doc(db, "events", eventId, "activities", "quiz", "leaderboard", pId);
         const existingEntry = leaderboard.find((e) => e.participantId === pId);
         const oldScore = existingEntry ? existingEntry.currentScore : 0;
@@ -242,12 +216,21 @@ export function AdminQuizController({
           lastAnswerTime: Date.now(),
         };
 
-        promises.push(setDoc(lbDocRef, updatedEntry, { merge: true }));
+        updates.push({ ref: lbDocRef, data: updatedEntry });
       });
 
-      await Promise.all(promises);
+      // 2. Chunk updates into batches of max 400 operations to satisfy Firestore limits securely
+      const BATCH_SIZE = 400;
+      for (let i = 0; i < updates.length; i += BATCH_SIZE) {
+        const chunk = updates.slice(i, i + BATCH_SIZE);
+        const batch = writeBatch(db);
+        chunk.forEach((item) => {
+          batch.set(item.ref, item.data, { merge: true });
+        });
+        await batch.commit();
+      }
 
-      // 3. Update session stage to "answer_reveal"
+      // 3. Update session stage to "answer_reveal" ONLY after all scoring batches succeed
       const sessionRef = doc(db, "events", eventId, "activities", "quiz", "session", "current");
       await updateDoc(sessionRef, {
         stage: "answer_reveal",
@@ -255,6 +238,7 @@ export function AdminQuizController({
       });
     } catch (err: any) {
       console.error("Error processing scoring:", err);
+      showToast("Scoring failed. Please retry.");
     }
   };
 
@@ -508,7 +492,7 @@ export function AdminQuizController({
                   <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-neutral-900 border border-neutral-800 text-xs font-mono font-bold text-orange-400">
                     <Users size={14} />
                     <span>
-                      Responses: {responseCount} / {participantCount || "?"}
+                      Participants: {participantCount || "?"}
                     </span>
                   </div>
 

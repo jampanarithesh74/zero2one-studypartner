@@ -12,7 +12,7 @@ import {
   Users,
   Gamepad2
 } from "lucide-react";
-import { doc, collection, onSnapshot } from "firebase/firestore";
+import { doc, collection, onSnapshot, query, where } from "firebase/firestore";
 import { db } from "../../lib/firebase";
 import { EventItem } from "../PublicEventPage";
 import { ActiveQuestionData, LiveAnswerData } from "./LiveRoomPanel";
@@ -67,14 +67,20 @@ export function AdminLiveControlsPanel({
     return () => unsubQuestion();
   }, [event.id]);
 
-  // Listen to answers collection in Firestore for response counting
+  const currentQuestionId = activeQuestion?.questionId || "";
+
+  // Listen to answers collection in Firestore for response counting (scoped to active question)
   useEffect(() => {
-    if (!event.id) return;
+    if (!event.id || !currentQuestionId) {
+      setAnswers([]);
+      return;
+    }
 
     const answersRef = collection(db, "events", event.id, "liveAnswers");
+    const qAns = query(answersRef, where("questionId", "==", currentQuestionId));
 
     const unsubAnswers = onSnapshot(
-      answersRef,
+      qAns,
       (snapshot) => {
         const list: LiveAnswerData[] = [];
         snapshot.forEach((docSnap) => {
@@ -88,9 +94,7 @@ export function AdminLiveControlsPanel({
     );
 
     return () => unsubAnswers();
-  }, [event.id]);
-
-  const currentQuestionId = activeQuestion?.questionId || "";
+  }, [event.id, currentQuestionId]);
   const matchingAnswers = currentQuestionId
     ? answers.filter((a) => a.questionId === currentQuestionId)
     : [];

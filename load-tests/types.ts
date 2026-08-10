@@ -1,0 +1,92 @@
+export interface VirtualUserOptions {
+  userId: string;
+  index: number;
+  eventId: string;
+  burstWindowMs?: number; // Random delay range before submitting answer to simulate user burst
+}
+
+export interface LatencyMetric {
+  durationMs: number;
+  timestamp: number;
+  success: boolean;
+  error?: string;
+  errorType?: 'permission' | 'timeout' | 'network' | 'rate_limit' | 'firestore' | 'other';
+}
+
+export interface SyncMetric {
+  latencyMs: number;
+  timestamp: number;
+  type: 'session' | 'leaderboard';
+}
+
+export interface VirtualUserStats {
+  userId: string;
+  joined: boolean;
+  joinDurationMs: number;
+  answersAttempted: number;
+  answersSuccessful: number;
+  answersFailed: number;
+  answerLatencies: LatencyMetric[];
+  sessionSyncs: SyncMetric[];
+  leaderboardSyncs: SyncMetric[];
+  activeListenersCount: number;
+  errors: Array<{ message: string; type: string; timestamp: number }>;
+}
+
+export interface ScenarioConfig {
+  name: string;
+  users: number;
+  rampUpSeconds: number;
+  burstWindowSeconds: number;
+}
+
+export interface LoadTestSummary {
+  eventId: string;
+  scenarioName: string;
+  totalUsersRequested: number;
+  totalUsersJoined: number;
+  totalUsersFailedToJoin: number;
+  
+  answerSubmissions: {
+    attempted: number;
+    successful: number;
+    failed: number;
+  };
+
+  latencyStats: {
+    answerWrite: {
+      avgMs: number;
+      minMs: number;
+      maxMs: number;
+      p50Ms: number;
+      p95Ms: number;
+      p99Ms: number;
+    };
+    sessionSync: {
+      avgMs: number;
+      p95Ms: number;
+    };
+    leaderboardSync: {
+      avgMs: number;
+      p95Ms: number;
+    };
+  };
+
+  resourceCounts: {
+    totalActiveListeners: number;
+    firestoreDocReadsEstimate: number;
+    firestoreDocWrites: number;
+    batchNetworkRequests: number;
+  };
+
+  errorsBreakdown: {
+    permission: number;
+    timeout: number;
+    network: number;
+    rateLimit: number;
+    firestore: number;
+    other: number;
+  };
+
+  durationMs: number;
+}

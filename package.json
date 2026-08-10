@@ -8,7 +8,9 @@
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "loadtest": "tsx load-tests/run-quiz-loadtest.ts",
+    "loadtest:cleanup": "tsx load-tests/cleanup.ts"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",

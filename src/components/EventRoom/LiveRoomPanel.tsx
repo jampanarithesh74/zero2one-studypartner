@@ -17,7 +17,9 @@ import {
   collection, 
   onSnapshot, 
   addDoc, 
-  serverTimestamp 
+  serverTimestamp,
+  query,
+  where
 } from "firebase/firestore";
 import { db } from "../../lib/firebase";
 import { EventItem } from "../PublicEventPage";
@@ -119,14 +121,20 @@ export function LiveRoomPanel({
     return () => unsubQuestion();
   }, [event.id]);
 
-  // Listen to answers collection in Firestore
+  const currentQuestionId = activeQuestion?.questionId || "";
+
+  // Listen to answers collection in Firestore (scoped to active question)
   useEffect(() => {
-    if (!event.id) return;
+    if (!event.id || !currentQuestionId) {
+      setAnswers([]);
+      return;
+    }
 
     const answersRef = collection(db, "events", event.id, "liveAnswers");
+    const qAnswers = query(answersRef, where("questionId", "==", currentQuestionId));
 
     const unsubAnswers = onSnapshot(
-      answersRef,
+      qAnswers,
       (snapshot) => {
         const list: LiveAnswerData[] = [];
         snapshot.forEach((docSnap) => {
@@ -140,10 +148,9 @@ export function LiveRoomPanel({
     );
 
     return () => unsubAnswers();
-  }, [event.id]);
+  }, [event.id, currentQuestionId]);
 
   // Derived calculations
-  const currentQuestionId = activeQuestion?.questionId || "";
   const matchingAnswers = currentQuestionId
     ? answers.filter((a) => a.questionId === currentQuestionId)
     : [];
@@ -206,7 +213,7 @@ export function LiveRoomPanel({
   };
 
   if (quizSession && quizSession.status === "running") {
-    return <QuizModeCard eventId={event.id} currentParticipant={currentParticipant} />;
+    return <QuizModeCard eventId={event.id} currentParticipant={currentParticipant} quizSession={quizSession} />;
   }
 
   return (

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { collection, onSnapshot, query, orderBy } from "firebase/firestore";
+import { collection, onSnapshot, query, orderBy, limit } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { EventItem } from "./PublicEventPage";
 import { Participant, getLinkedinProfileUrl } from "./ParticipantOnboarding";
@@ -34,7 +34,9 @@ export function EventRoom({
   useEffect(() => {
     setLoading(true);
     const participantsRef = collection(db, "events", event.id, "participants");
-    const q = query(participantsRef, orderBy("joinedAt", "desc"));
+    const q = query(participantsRef, orderBy("joinedAt", "desc"), limit(100));
+
+    let activeUnsub: (() => void) | null = null;
 
     const unsubscribe = onSnapshot(
       q,
@@ -49,7 +51,7 @@ export function EventRoom({
       (error) => {
         console.warn("Ordered participants query error, falling back:", error);
         const fallbackUnsub = onSnapshot(
-          collection(db, "events", event.id, "participants"),
+          query(collection(db, "events", event.id, "participants"), limit(100)),
           (snapshot) => {
             const list: (Participant & { id: string })[] = [];
             snapshot.forEach((doc) => {
@@ -59,11 +61,15 @@ export function EventRoom({
             setLoading(false);
           }
         );
-        return () => fallbackUnsub();
+        activeUnsub = fallbackUnsub;
       }
     );
 
-    return () => unsubscribe();
+    activeUnsub = unsubscribe;
+
+    return () => {
+      if (activeUnsub) activeUnsub();
+    };
   }, [event.id]);
 
   // Extract unique departments dynamically from real participant list

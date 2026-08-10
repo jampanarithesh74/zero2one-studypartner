@@ -9,7 +9,7 @@ import {
   Hourglass,
   Zap
 } from "lucide-react";
-import { doc, collection, onSnapshot, setDoc, serverTimestamp } from "firebase/firestore";
+import { doc, collection, onSnapshot, setDoc, serverTimestamp, query, orderBy, limit } from "firebase/firestore";
 import { db } from "../../lib/firebase";
 import { Participant } from "../ParticipantOnboarding";
 import { QuizSessionData, QuizLeaderboardEntry } from "../../data/quizQuestions";
@@ -18,12 +18,13 @@ import { QuizLeaderboardView } from "./QuizLeaderboardView";
 interface QuizModeCardProps {
   eventId: string;
   currentParticipant?: Participant | null;
+  quizSession?: QuizSessionData | null;
 }
 
-export function QuizModeCard({ eventId, currentParticipant }: QuizModeCardProps) {
-  const [session, setSession] = useState<QuizSessionData | null>(null);
+export function QuizModeCard({ eventId, currentParticipant, quizSession: passedQuizSession }: QuizModeCardProps) {
+  const [session, setSession] = useState<QuizSessionData | null>(passedQuizSession || null);
   const [leaderboard, setLeaderboard] = useState<QuizLeaderboardEntry[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState<boolean>(!passedQuizSession);
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
   const [isSubmitted, setIsSubmitted] = useState<boolean>(false);
   const [timeRemaining, setTimeRemaining] = useState<number>(30);
@@ -35,8 +36,14 @@ export function QuizModeCard({ eventId, currentParticipant }: QuizModeCardProps)
     currentParticipant?.name ||
     `participant_${Math.random().toString(36).substring(2, 9)}`;
 
-  // 1. Listen to Quiz Session
+  // 1. Sync passed quizSession or listen if not passed
   useEffect(() => {
+    if (passedQuizSession) {
+      setSession(passedQuizSession);
+      setLoading(false);
+      return;
+    }
+
     if (!eventId) return;
 
     setLoading(true);
@@ -59,16 +66,17 @@ export function QuizModeCard({ eventId, currentParticipant }: QuizModeCardProps)
     );
 
     return () => unsubSession();
-  }, [eventId]);
+  }, [eventId, passedQuizSession]);
 
-  // 2. Listen to Leaderboard
+  // 2. Listen to Top 10 Leaderboard + Participant's own entry
   useEffect(() => {
     if (!eventId) return;
 
     const leaderboardRef = collection(db, "events", eventId, "activities", "quiz", "leaderboard");
+    const qLb = query(leaderboardRef, orderBy("currentScore", "desc"), limit(10));
 
     const unsubLeaderboard = onSnapshot(
-      leaderboardRef,
+      qLb,
       (snapshot) => {
         const list: QuizLeaderboardEntry[] = [];
         snapshot.forEach((docSnap) => {
@@ -81,8 +89,25 @@ export function QuizModeCard({ eventId, currentParticipant }: QuizModeCardProps)
       }
     );
 
-    return () => unsubLeaderboard();
-  }, [eventId]);
+    const userLbRef = doc(db, "events", eventId, "activities", "quiz", "leaderboard", participantId);
+    const unsubUserLb = onSnapshot(userLbRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const userEntry = docSnap.data() as QuizLeaderboardEntry;
+        setLeaderboard((prev) => {
+          if (prev.some((e) => e.participantId === participantId)) {
+            return prev.map((e) => (e.participantId === participantId ? userEntry : e));
+          } else {
+            return [...prev, userEntry];
+          }
+        });
+      }
+    });
+
+    return () => {
+      unsubLeaderboard();
+      unsubUserLb();
+    };
+  }, [eventId, participantId]);
 
   // 3. Reset selection state whenever currentQuestionIndex changes
   useEffect(() => {

@@ -12,7 +12,7 @@ import {
   Flame,
   Users
 } from "lucide-react";
-import { doc, collection, onSnapshot } from "firebase/firestore";
+import { doc, collection, onSnapshot, query, where, orderBy, limit } from "firebase/firestore";
 import { db } from "../../lib/firebase";
 import { EventItem } from "../PublicEventPage";
 import { ActiveQuestionData, LiveAnswerData } from "../EventRoom/LiveRoomPanel";
@@ -123,13 +123,19 @@ export function LiveWallPage({ isAdmin }: LiveWallPageProps) {
     return () => unsubQuestion();
   }, [eventId]);
 
-  // 3. Listen to Live Answers
+  const currentQuestionId = activeQuestion?.questionId || "";
+
+  // 3. Listen to Live Answers (scoped to current active question)
   useEffect(() => {
-    if (!eventId) return;
+    if (!eventId || !currentQuestionId) {
+      setAnswers([]);
+      return;
+    }
 
     const answersRef = collection(db, "events", eventId, "liveAnswers");
+    const qAnswers = query(answersRef, where("questionId", "==", currentQuestionId));
     const unsubAnswers = onSnapshot(
-      answersRef,
+      qAnswers,
       (snap) => {
         const list: LiveAnswerData[] = [];
         snap.forEach((d) => list.push({ id: d.id, ...d.data() } as LiveAnswerData));
@@ -139,7 +145,7 @@ export function LiveWallPage({ isAdmin }: LiveWallPageProps) {
     );
 
     return () => unsubAnswers();
-  }, [eventId]);
+  }, [eventId, currentQuestionId]);
 
   // 4. Listen to Quiz Session
   useEffect(() => {
@@ -161,13 +167,14 @@ export function LiveWallPage({ isAdmin }: LiveWallPageProps) {
     return () => unsubQuizSession();
   }, [eventId]);
 
-  // 5. Listen to Quiz Leaderboard
+  // 5. Listen to Quiz Leaderboard (Top 10)
   useEffect(() => {
     if (!eventId) return;
 
     const leaderboardRef = collection(db, "events", eventId, "activities", "quiz", "leaderboard");
+    const qLb = query(leaderboardRef, orderBy("currentScore", "desc"), limit(10));
     const unsubLb = onSnapshot(
-      leaderboardRef,
+      qLb,
       (snap) => {
         const list: QuizLeaderboardEntry[] = [];
         snap.forEach((d) => list.push(d.data() as QuizLeaderboardEntry));
@@ -180,7 +187,6 @@ export function LiveWallPage({ isAdmin }: LiveWallPageProps) {
   }, [eventId]);
 
   // Filter matching answers for current active question
-  const currentQuestionId = activeQuestion?.questionId || "";
   const matchingAnswers = useMemo(() => {
     if (!currentQuestionId) return [];
     return answers.filter((a) => a.questionId === currentQuestionId);

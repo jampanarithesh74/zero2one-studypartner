@@ -45,6 +45,8 @@ export function EventsListingPage({ currentUserEmail, currentUserId, isAdmin = f
     const eventsRef = collection(db, "events");
     const q = query(eventsRef, orderBy("createdAt", "desc"));
 
+    let activeUnsub: (() => void) | null = null;
+
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
@@ -68,11 +70,15 @@ export function EventsListingPage({ currentUserEmail, currentUserId, isAdmin = f
             setLoading(false);
           }
         );
-        return () => fallbackUnsub();
+        activeUnsub = fallbackUnsub;
       }
     );
 
-    return () => unsubscribe();
+    activeUnsub = unsubscribe;
+
+    return () => {
+      if (activeUnsub) activeUnsub();
+    };
   }, []);
 
   const formatDateTime = (isoStr: string) => {
