@@ -1,6 +1,7 @@
 import { getLoadTestFirebase } from "./config.js";
 import { VirtualUser } from "./virtual-user.js";
-import { LoadTestSummary, ScenarioConfig, LatencyMetric } from "./types.js";
+import { QuizSessionDriver } from "./session-driver.js";
+import { LoadTestSummary, LatencyMetric, UserCompletionStatus } from "./types.js";
 
 export class LoadTestRunner {
   private eventId: string;
@@ -8,7 +9,9 @@ export class LoadTestRunner {
   private rampUpSeconds: number;
   private burstWindowSeconds: number;
   private scenarioName: string;
+  private autoDriveSession: boolean;
   private virtualUsers: VirtualUser[] = [];
+  private sessionDriver: QuizSessionDriver | null = null;
   private startTime: number = 0;
 
   constructor(
@@ -16,13 +19,15 @@ export class LoadTestRunner {
     usersCount: number,
     rampUpSeconds: number = 5,
     burstWindowSeconds: number = 2,
-    scenarioName: string = "CUSTOM"
+    scenarioName: string = "CUSTOM",
+    autoDriveSession: boolean = true
   ) {
     this.eventId = eventId;
     this.targetUsersCount = usersCount;
     this.rampUpSeconds = rampUpSeconds;
     this.burstWindowSeconds = burstWindowSeconds;
     this.scenarioName = scenarioName;
+    this.autoDriveSession = autoDriveSession;
   }
 
   public async run(durationSeconds: number = 60): Promise<LoadTestSummary> {
@@ -36,6 +41,7 @@ export class LoadTestRunner {
     console.log(`Virtual Users:   ${this.targetUsersCount}`);
     console.log(`Ramp-up Window:  ${this.rampUpSeconds}s`);
     console.log(`Burst Window:   ${this.burstWindowSeconds}s`);
+    console.log(`Auto-Drive Quiz: ${this.autoDriveSession ? "YES (5 Questions)" : "NO"}`);
     console.log("==================================================\n");
 
     const batchSize = Math.max(1, Math.floor(this.targetUsersCount / Math.max(1, this.rampUpSeconds * 2)));
@@ -78,6 +84,16 @@ export class LoadTestRunner {
     }
 
     console.log(`\n✅ All ${this.virtualUsers.length} Virtual Users spawned & listeners initialized.`);
+
+    // If autoDriveSession is enabled, launch SessionDriver to progress all 5 questions
+    let sessionDriverPromise: Promise<void> | null = null;
+    if (this.autoDriveSession) {
+      // Allocate question duration based on total test time
+      const questionWindowSec = Math.max(3, Math.floor((durationSeconds - 20) / 5));
+      this.sessionDriver = new QuizSessionDriver(db, this.eventId, questionWindowSec);
+      sessionDriverPromise = this.sessionDriver.driveSession();
+    }
+
     console.log(`⏱️ Monitoring session stage and answer submissions for ${durationSeconds} seconds...\n`);
 
     // Progress updates every 5 seconds
@@ -85,16 +101,31 @@ export class LoadTestRunner {
       const activeCount = this.virtualUsers.filter((u) => u.stats.joined).length;
       const totalAnswers = this.virtualUsers.reduce((sum, u) => sum + u.stats.answersSuccessful, 0);
       const totalFailed = this.virtualUsers.reduce((sum, u) => sum + u.stats.answersFailed, 0);
-      console.log(`[Progress] Active Users: ${activeCount} | Answers Submitted: ${totalAnswers} | Failures: ${totalFailed}`);
+      const expectedTotal = activeCount * 5;
+      console.log(`[Progress] Joined Users: ${activeCount}/${this.targetUsersCount} | Answers Submitted: ${totalAnswers}/${expectedTotal} | Failures: ${totalFailed}`);
     }, 5000);
 
-    await new Promise((resolve) => setTimeout(resolve, durationSeconds * 1000));
+    // Wait for session driver to complete or time out
+    if (sessionDriverPromise) {
+      await Promise.race([
+        sessionDriverPromise,
+        new Promise((resolve) => setTimeout(resolve, durationSeconds * 1000))
+      ]);
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, durationSeconds * 1000));
+    }
+
     clearInterval(interval);
 
-    console.log("\n⏹️ Test duration complete. Stopping all virtual user listeners...");
-    this.virtualUsers.forEach((u) => u.stop());
+    console.log("\n⏹️ Test duration complete. Generating summary before stopping listeners...");
 
     const summary = this.generateSummary();
+
+    if (this.sessionDriver) {
+      this.sessionDriver.stop();
+    }
+    this.virtualUsers.forEach((u) => u.stop());
+
     this.printReport(summary);
 
     return summary;
@@ -110,7 +141,8 @@ export class LoadTestRunner {
     const allAnswerLatencies: LatencyMetric[] = [];
     const allSessionSyncs: number[] = [];
     const allLeaderboardSyncs: number[] = [];
-    let activeListenersCount = 0;
+    let currentActiveListeners = 0;
+    let peakActiveListeners = 0;
 
     const errorsBreakdown = {
       permission: 0,
@@ -121,6 +153,8 @@ export class LoadTestRunner {
       other: 0
     };
 
+    const userBreakdown: UserCompletionStatus[] = [];
+
     this.virtualUsers.forEach((u) => {
       attemptedAnswers += u.stats.answersAttempted;
       successfulAnswers += u.stats.answersSuccessful;
@@ -130,7 +164,15 @@ export class LoadTestRunner {
       u.stats.sessionSyncs.forEach((s) => allSessionSyncs.push(s.latencyMs));
       u.stats.leaderboardSyncs.forEach((l) => allLeaderboardSyncs.push(l.latencyMs));
 
-      activeListenersCount += u.stats.activeListenersCount;
+      currentActiveListeners += u.stats.activeListenersCount;
+      peakActiveListeners += (u.stats.peakListenersCount || u.stats.activeListenersCount);
+
+      userBreakdown.push({
+        userId: u.id,
+        participantId: u.participantId,
+        answersSubmitted: u.stats.answersSuccessful,
+        success: u.stats.answersSuccessful === 5
+      });
 
       u.stats.errors.forEach((e) => {
         const typeKey = e.type as keyof typeof errorsBreakdown;
@@ -141,6 +183,11 @@ export class LoadTestRunner {
         }
       });
     });
+
+    const expectedAnswersPerUser = 5;
+    const expectedAnswers = totalUsersJoined * expectedAnswersPerUser;
+    const usersFullyCompleted = userBreakdown.filter((u) => u.answersSubmitted === 5).length;
+    const isComplete = (successfulAnswers >= expectedAnswers && usersFullyCompleted === totalUsersJoined);
 
     const answerDurations = allAnswerLatencies.map((m) => m.durationMs).sort((a, b) => a - b);
     const avgAnswerMs = answerDurations.length ? answerDurations.reduce((a, b) => a + b, 0) / answerDurations.length : 0;
@@ -159,9 +206,7 @@ export class LoadTestRunner {
     const p95LbSyncMs = this.percentile(sortedLbSyncs, 95);
 
     // Calculate exact Firestore operation workload
-    // Writes = 1 join write + successful answers
     const firestoreDocWrites = totalUsersJoined + successfulAnswers;
-    // Initial reads per user = 1 participant initial + 1 session initial + 1 leaderboard initial + 1 personal leaderboard initial = 4 reads per user
     const firestoreDocReadsEstimate = totalUsersJoined * 4;
 
     return {
@@ -174,6 +219,14 @@ export class LoadTestRunner {
         attempted: attemptedAnswers,
         successful: successfulAnswers,
         failed: failedAnswers
+      },
+      completion: {
+        isComplete,
+        expectedAnswers,
+        actualAnswers: successfulAnswers,
+        expectedAnswersPerUser,
+        usersFullyCompleted,
+        userBreakdown
       },
       latencyStats: {
         answerWrite: {
@@ -194,10 +247,11 @@ export class LoadTestRunner {
         }
       },
       resourceCounts: {
-        totalActiveListeners: activeListenersCount,
+        totalActiveListeners: currentActiveListeners,
+        peakActiveListeners,
         firestoreDocReadsEstimate,
         firestoreDocWrites,
-        batchNetworkRequests: 0 // Individual client writes
+        batchNetworkRequests: 0
       },
       errorsBreakdown,
       durationMs: Date.now() - this.startTime
@@ -217,6 +271,23 @@ export class LoadTestRunner {
     console.log(`Target Event ID:      ${summary.eventId}`);
     console.log(`Scenario:             ${summary.scenarioName}`);
     console.log(`Duration:             ${(summary.durationMs / 1000).toFixed(1)}s`);
+
+    console.log("\n--- COMPLETION VALIDATION ---");
+    if (summary.completion.isComplete) {
+      console.log(`✅ TEST STATUS:          COMPLETE (All 5 questions answered by all users)`);
+    } else {
+      console.log(`❌ TEST STATUS:          INCOMPLETE (Expected ${summary.completion.expectedAnswers} answers, got ${summary.completion.actualAnswers})`);
+    }
+    console.log(`Expected Total Answers: ${summary.completion.expectedAnswers} (${summary.totalUsersJoined} users × 5 questions)`);
+    console.log(`Actual Total Answers:   ${summary.completion.actualAnswers}`);
+    console.log(`Users Completed (5/5):  ${summary.completion.usersFullyCompleted} / ${summary.totalUsersJoined}`);
+
+    console.log("\n--- INDIVIDUAL USER BREAKDOWN ---");
+    summary.completion.userBreakdown.forEach((u) => {
+      const statusSymbol = u.success ? "✅ OK" : "❌ INCOMPLETE";
+      console.log(`${u.participantId}: ${u.answersSubmitted}/5 answers [${statusSymbol}]`);
+    });
+
     console.log("\n--- VIRTUAL USERS ---");
     console.log(`Requested:            ${summary.totalUsersRequested}`);
     console.log(`Successfully Joined:  ${summary.totalUsersJoined}`);
@@ -240,7 +311,7 @@ export class LoadTestRunner {
     console.log(`Leaderboard Sync P95: ${summary.latencyStats.leaderboardSync.p95Ms} ms`);
 
     console.log("\n--- FIRESTORE WORKLOAD & RESOURCES ---");
-    console.log(`Peak Active Listeners:${summary.resourceCounts.totalActiveListeners}`);
+    console.log(`Peak Active Listeners:${summary.resourceCounts.peakActiveListeners}`);
     console.log(`Doc Reads (Initial):  ${summary.resourceCounts.firestoreDocReadsEstimate}`);
     console.log(`Doc Writes (Total):   ${summary.resourceCounts.firestoreDocWrites}`);
 

@@ -30,11 +30,16 @@ async function main() {
     scenarioName = `CUSTOM (${users} Users)`;
   }
 
-  // Duration flag support
+  // Duration flag and Session Driver support
   let durationSeconds = 45;
+  let driveSession = true;
+
   process.argv.forEach((arg) => {
     if (arg.startsWith("--duration=")) {
       durationSeconds = parseInt(arg.split("=")[1], 10);
+    }
+    if (arg.startsWith("--drive-session=")) {
+      driveSession = arg.split("=")[1] === "true";
     }
   });
 
@@ -43,7 +48,8 @@ async function main() {
     users,
     rampUp,
     burst,
-    scenarioName
+    scenarioName,
+    driveSession
   );
 
   await runner.run(durationSeconds);

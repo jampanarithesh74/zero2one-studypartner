@@ -43,6 +43,7 @@ export class VirtualUser {
       sessionSyncs: [],
       leaderboardSyncs: [],
       activeListenersCount: 0,
+      peakListenersCount: 0,
       errors: []
     };
   }
@@ -86,12 +87,13 @@ export class VirtualUser {
         if (!snapshot.exists()) return;
         const data = snapshot.data();
 
-        // Track session sync latency if timestamp is present
-        if (data.updatedAt) {
-          const updatedAtMs = typeof data.updatedAt.toMillis === "function" 
-            ? data.updatedAt.toMillis() 
-            : typeof data.updatedAt === "number" ? data.updatedAt : Date.now();
-          const latencyMs = Math.max(0, Date.now() - updatedAtMs);
+        // Track session sync latency using production session timestamps (questionStartTime or startedAt or updatedAt)
+        const sessionTimeMs = data.questionStartTime 
+          || data.startedAt 
+          || (typeof data.updatedAt?.toMillis === "function" ? data.updatedAt.toMillis() : (typeof data.updatedAt === "number" ? data.updatedAt : null));
+
+        if (sessionTimeMs) {
+          const latencyMs = Math.max(0, Date.now() - sessionTimeMs);
           this.stats.sessionSyncs.push({
             latencyMs,
             timestamp: Date.now(),
@@ -99,7 +101,7 @@ export class VirtualUser {
           });
         }
 
-        // If active question stage, schedule answer submission
+        // If active question stage, schedule answer submission for that specific question index
         if (data.status === "running" && data.stage === "question" && typeof data.currentQuestionIndex === "number") {
           const qIndex = data.currentQuestionIndex;
           if (!this.submittedQuestions.has(qIndex)) {
@@ -119,8 +121,16 @@ export class VirtualUser {
     const unsubLb = onSnapshot(
       qLb,
       (snapshot) => {
+        let maxLatency = 0;
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          if (data.lastAnswerTime) {
+            const latency = Math.max(0, Date.now() - data.lastAnswerTime);
+            if (latency > maxLatency) maxLatency = latency;
+          }
+        });
         this.stats.leaderboardSyncs.push({
-          latencyMs: 0, // Recorded snapshot delivery
+          latencyMs: maxLatency,
           timestamp: Date.now(),
           type: "leaderboard"
         });
@@ -143,6 +153,7 @@ export class VirtualUser {
     this.unsubscribers.push(unsubUserLb);
 
     this.stats.activeListenersCount = this.unsubscribers.length;
+    this.stats.peakListenersCount = Math.max(this.stats.peakListenersCount || 0, this.unsubscribers.length);
   }
 
   // 3. Submit Quiz Answer (Guaranteed Exactly Once Per Question)

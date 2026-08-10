@@ -30,6 +30,7 @@ export interface VirtualUserStats {
   sessionSyncs: SyncMetric[];
   leaderboardSyncs: SyncMetric[];
   activeListenersCount: number;
+  peakListenersCount: number;
   errors: Array<{ message: string; type: string; timestamp: number }>;
 }
 
@@ -38,6 +39,13 @@ export interface ScenarioConfig {
   users: number;
   rampUpSeconds: number;
   burstWindowSeconds: number;
+}
+
+export interface UserCompletionStatus {
+  userId: string;
+  participantId: string;
+  answersSubmitted: number;
+  success: boolean;
 }
 
 export interface LoadTestSummary {
@@ -51,6 +59,15 @@ export interface LoadTestSummary {
     attempted: number;
     successful: number;
     failed: number;
+  };
+
+  completion: {
+    isComplete: boolean;
+    expectedAnswers: number;
+    actualAnswers: number;
+    expectedAnswersPerUser: number;
+    usersFullyCompleted: number;
+    userBreakdown: UserCompletionStatus[];
   };
 
   latencyStats: {
@@ -74,6 +91,7 @@ export interface LoadTestSummary {
 
   resourceCounts: {
     totalActiveListeners: number;
+    peakActiveListeners: number;
     firestoreDocReadsEstimate: number;
     firestoreDocWrites: number;
     batchNetworkRequests: number;
