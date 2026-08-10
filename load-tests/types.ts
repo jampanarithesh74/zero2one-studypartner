@@ -48,9 +48,31 @@ export interface UserCompletionStatus {
   success: boolean;
 }
 
+export interface WorkerInitPayload {
+  workerId: number;
+  startUserIndex: number;
+  userCount: number;
+  eventId: string;
+  burstWindowMs: number;
+  rampUpMs: number;
+}
+
+export type WorkerToParentMessage =
+  | { type: "READY"; workerId: number; joinedCount: number }
+  | { type: "PROGRESS"; workerId: number; joinedCount: number; answersSuccessful: number; answersFailed: number }
+  | { type: "STATS"; workerId: number; stats: VirtualUserStats[] }
+  | { type: "ERROR"; workerId: number; error: string };
+
+export type ParentToWorkerMessage =
+  | { type: "START"; payload: WorkerInitPayload }
+  | { type: "GET_STATS" }
+  | { type: "STOP" };
+
 export interface LoadTestSummary {
   eventId: string;
   scenarioName: string;
+  workersCount: number;
+  usersPerWorker: number;
   totalUsersRequested: number;
   totalUsersJoined: number;
   totalUsersFailedToJoin: number;

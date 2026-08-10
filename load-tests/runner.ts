@@ -1,7 +1,20 @@
+import path from "path";
+import { fileURLToPath } from "url";
+import { fork, ChildProcess } from "child_process";
 import { getLoadTestFirebase } from "./config.js";
-import { VirtualUser } from "./virtual-user.js";
 import { QuizSessionDriver } from "./session-driver.js";
-import { LoadTestSummary, LatencyMetric, UserCompletionStatus } from "./types.js";
+import { 
+  LoadTestSummary, 
+  VirtualUserStats, 
+  LatencyMetric, 
+  UserCompletionStatus,
+  WorkerToParentMessage,
+  WorkerInitPayload
+} from "./types.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const workerPath = path.join(__dirname, "worker.ts");
 
 export class LoadTestRunner {
   private eventId: string;
@@ -10,7 +23,7 @@ export class LoadTestRunner {
   private burstWindowSeconds: number;
   private scenarioName: string;
   private autoDriveSession: boolean;
-  private virtualUsers: VirtualUser[] = [];
+  private usersPerWorker: number;
   private sessionDriver: QuizSessionDriver | null = null;
   private startTime: number = 0;
 
@@ -20,7 +33,8 @@ export class LoadTestRunner {
     rampUpSeconds: number = 5,
     burstWindowSeconds: number = 2,
     scenarioName: string = "CUSTOM",
-    autoDriveSession: boolean = true
+    autoDriveSession: boolean = true,
+    usersPerWorker: number = 50
   ) {
     this.eventId = eventId;
     this.targetUsersCount = usersCount;
@@ -28,111 +42,171 @@ export class LoadTestRunner {
     this.burstWindowSeconds = burstWindowSeconds;
     this.scenarioName = scenarioName;
     this.autoDriveSession = autoDriveSession;
+    this.usersPerWorker = Math.min(usersPerWorker, Math.max(1, usersCount));
   }
 
-  public async run(durationSeconds: number = 60): Promise<LoadTestSummary> {
+  public async run(explicitDurationSeconds?: number): Promise<LoadTestSummary> {
     const { db } = getLoadTestFirebase();
     this.startTime = Date.now();
+
+    const numWorkers = Math.max(1, Math.ceil(this.targetUsersCount / this.usersPerWorker));
+
+    // Calculate dynamic duration if not explicitly specified
+    const questionSec = 12;
+    const revealSec = 3;
+    const lbSec = 3;
+    const quizLifecycleSec = 5 * (questionSec + revealSec + lbSec); // 90 seconds
+    const dynamicDurationSeconds = Math.max(
+      45,
+      this.rampUpSeconds + 15 + quizLifecycleSec
+    );
+
+    const durationSeconds = explicitDurationSeconds || dynamicDurationSeconds;
 
     console.log("\n==================================================");
     console.log("🚀 ZERO2ONE QUIZ LOAD TEST RUNNER STARTED");
     console.log(`Target Event ID: ${this.eventId}`);
     console.log(`Scenario:        ${this.scenarioName}`);
     console.log(`Virtual Users:   ${this.targetUsersCount}`);
+    console.log(`Worker Processes:${numWorkers} (${this.usersPerWorker} users/worker max)`);
     console.log(`Ramp-up Window:  ${this.rampUpSeconds}s`);
     console.log(`Burst Window:   ${this.burstWindowSeconds}s`);
+    console.log(`Max Test Duration: ${durationSeconds}s`);
     console.log(`Auto-Drive Quiz: ${this.autoDriveSession ? "YES (5 Questions)" : "NO"}`);
     console.log("==================================================\n");
 
-    const batchSize = Math.max(1, Math.floor(this.targetUsersCount / Math.max(1, this.rampUpSeconds * 2)));
-    const stepIntervalMs = Math.floor((this.rampUpSeconds * 1000) / Math.max(1, this.targetUsersCount / batchSize));
+    console.log(`⏳ Forking ${numWorkers} worker processes and spawning ${this.targetUsersCount} virtual users...`);
 
-    console.log(`⏳ Spawning ${this.targetUsersCount} virtual users...`);
+    const workerProcesses: ChildProcess[] = [];
+    const workerProgressMap: Map<number, { joinedCount: number; answersSuccessful: number; answersFailed: number }> = new Map();
+    const workerStatsPromises: Promise<VirtualUserStats[]>[] = [];
 
-    let spawned = 0;
-    while (spawned < this.targetUsersCount) {
-      const currentBatch = Math.min(batchSize, this.targetUsersCount - spawned);
-      const spawnPromises: Promise<void>[] = [];
+    let spawnedUsers = 0;
 
-      for (let i = 0; i < currentBatch; i++) {
-        const userIndex = spawned + i + 1;
-        const userId = String(userIndex).padStart(4, "0");
-        const vUser = new VirtualUser(db, {
-          userId,
-          index: userIndex,
-          eventId: this.eventId,
-          burstWindowMs: this.burstWindowSeconds * 1000
+    for (let w = 0; w < numWorkers; w++) {
+      const workerId = w + 1;
+      const workerUserCount = Math.min(this.usersPerWorker, this.targetUsersCount - spawnedUsers);
+      const startUserIndex = spawnedUsers + 1;
+      spawnedUsers += workerUserCount;
+
+      const workerRampUpMs = Math.floor((this.rampUpSeconds * 1000 * workerUserCount) / this.targetUsersCount);
+
+      const execArgv = process.execArgv.length > 0 ? process.execArgv : ["--import", "tsx"];
+      const child = fork(workerPath, [], { execArgv });
+      workerProcesses.push(child);
+
+      workerProgressMap.set(workerId, { joinedCount: 0, answersSuccessful: 0, answersFailed: 0 });
+
+      const statsPromise = new Promise<VirtualUserStats[]>((resolve) => {
+        child.on("message", (msg: WorkerToParentMessage) => {
+          if (msg.type === "PROGRESS") {
+            workerProgressMap.set(msg.workerId, {
+              joinedCount: msg.joinedCount,
+              answersSuccessful: msg.answersSuccessful,
+              answersFailed: msg.answersFailed
+            });
+          } else if (msg.type === "STATS") {
+            resolve(msg.stats);
+          }
         });
+      });
 
-        this.virtualUsers.push(vUser);
+      workerStatsPromises.push(statsPromise);
 
-        spawnPromises.push(
-          vUser.join().then((success) => {
-            if (success) {
-              vUser.startListeners();
-            }
-          })
-        );
-      }
+      const payload: WorkerInitPayload = {
+        workerId,
+        startUserIndex,
+        userCount: workerUserCount,
+        eventId: this.eventId,
+        burstWindowMs: this.burstWindowSeconds * 1000,
+        rampUpMs: workerRampUpMs
+      };
 
-      await Promise.all(spawnPromises);
-      spawned += currentBatch;
-
-      if (spawned < this.targetUsersCount && stepIntervalMs > 0) {
-        await new Promise((resolve) => setTimeout(resolve, stepIntervalMs));
-      }
+      child.send({ type: "START", payload });
     }
 
-    console.log(`\n✅ All ${this.virtualUsers.length} Virtual Users spawned & listeners initialized.`);
+    console.log(`\n✅ ${numWorkers} Worker processes launched. Monitoring user setup and quiz progress...`);
 
-    // If autoDriveSession is enabled, launch SessionDriver to progress all 5 questions
+    // Launch SessionDriver
     let sessionDriverPromise: Promise<void> | null = null;
     if (this.autoDriveSession) {
-      // Allocate question duration based on total test time
-      const questionWindowSec = Math.max(3, Math.floor((durationSeconds - 20) / 5));
-      this.sessionDriver = new QuizSessionDriver(db, this.eventId, questionWindowSec);
-      sessionDriverPromise = this.sessionDriver.driveSession();
+      // Start session driver after initial ramp-up buffer
+      this.sessionDriver = new QuizSessionDriver(db, this.eventId, {
+        questionDurationSec: questionSec,
+        revealDurationSec: revealSec,
+        leaderboardDurationSec: lbSec
+      });
+
+      // Brief delay before starting Question 1 to allow virtual users to finish joining
+      const startDelayMs = Math.min(5000, this.rampUpSeconds * 1000);
+      sessionDriverPromise = (async () => {
+        await new Promise((r) => setTimeout(r, startDelayMs));
+        await this.sessionDriver!.driveSession();
+      })();
     }
 
-    console.log(`⏱️ Monitoring session stage and answer submissions for ${durationSeconds} seconds...\n`);
+    // Monitor progress loop
+    const monitorStartTime = Date.now();
+    let isFinishedEarly = false;
 
-    // Progress updates every 5 seconds
     const interval = setInterval(() => {
-      const activeCount = this.virtualUsers.filter((u) => u.stats.joined).length;
-      const totalAnswers = this.virtualUsers.reduce((sum, u) => sum + u.stats.answersSuccessful, 0);
-      const totalFailed = this.virtualUsers.reduce((sum, u) => sum + u.stats.answersFailed, 0);
-      const expectedTotal = activeCount * 5;
-      console.log(`[Progress] Joined Users: ${activeCount}/${this.targetUsersCount} | Answers Submitted: ${totalAnswers}/${expectedTotal} | Failures: ${totalFailed}`);
-    }, 5000);
+      let totalJoined = 0;
+      let totalSuccessful = 0;
+      let totalFailed = 0;
 
-    // Wait for session driver to complete or time out
-    if (sessionDriverPromise) {
+      workerProgressMap.forEach((val) => {
+        totalJoined += val.joinedCount;
+        totalSuccessful += val.answersSuccessful;
+        totalFailed += val.answersFailed;
+      });
+
+      const expectedTotal = totalJoined * 5;
+      console.log(`[Progress] Joined Users: ${totalJoined}/${this.targetUsersCount} | Answers Submitted: ${totalSuccessful}/${expectedTotal} | Failures: ${totalFailed}`);
+
+      // Check if all joined users have answered all 5 questions
+      if (totalJoined > 0 && totalSuccessful >= expectedTotal) {
+        console.log(`\n🎉 All ${expectedTotal} expected answers received across all workers! Completing test early.`);
+        isFinishedEarly = true;
+      }
+    }, 3000);
+
+    // Wait until duration completes, early finish occurs, or session driver finishes
+    const timeoutPromise = new Promise((resolve) => setTimeout(resolve, durationSeconds * 1000));
+
+    while (!isFinishedEarly && (Date.now() - monitorStartTime) < durationSeconds * 1000) {
       await Promise.race([
-        sessionDriverPromise,
-        new Promise((resolve) => setTimeout(resolve, durationSeconds * 1000))
+        timeoutPromise,
+        new Promise((r) => setTimeout(r, 1000))
       ]);
-    } else {
-      await new Promise((resolve) => setTimeout(resolve, durationSeconds * 1000));
+      if (isFinishedEarly) break;
     }
 
     clearInterval(interval);
 
-    console.log("\n⏹️ Test duration complete. Generating summary before stopping listeners...");
+    console.log("\n⏹️ Test monitoring period complete. Requesting final statistics from workers...");
 
-    const summary = this.generateSummary();
+    // Request final stats from all workers
+    workerProcesses.forEach((child) => {
+      if (child.connected) {
+        child.send({ type: "GET_STATS" });
+      }
+    });
+
+    const allWorkerStatsResults = await Promise.all(workerStatsPromises);
+    const combinedVirtualUserStats: VirtualUserStats[] = allWorkerStatsResults.flat();
 
     if (this.sessionDriver) {
       this.sessionDriver.stop();
     }
-    this.virtualUsers.forEach((u) => u.stop());
 
+    const summary = this.generateSummary(combinedVirtualUserStats, numWorkers);
     this.printReport(summary);
 
     return summary;
   }
 
-  private generateSummary(): LoadTestSummary {
-    const totalUsersJoined = this.virtualUsers.filter((u) => u.stats.joined).length;
+  private generateSummary(userStats: VirtualUserStats[], workersCount: number): LoadTestSummary {
+    const totalUsersJoined = userStats.filter((u) => u.joined).length;
     const totalUsersFailedToJoin = this.targetUsersCount - totalUsersJoined;
 
     let attemptedAnswers = 0;
@@ -155,26 +229,26 @@ export class LoadTestRunner {
 
     const userBreakdown: UserCompletionStatus[] = [];
 
-    this.virtualUsers.forEach((u) => {
-      attemptedAnswers += u.stats.answersAttempted;
-      successfulAnswers += u.stats.answersSuccessful;
-      failedAnswers += u.stats.answersFailed;
+    userStats.forEach((u) => {
+      attemptedAnswers += u.answersAttempted;
+      successfulAnswers += u.answersSuccessful;
+      failedAnswers += u.answersFailed;
 
-      allAnswerLatencies.push(...u.stats.answerLatencies);
-      u.stats.sessionSyncs.forEach((s) => allSessionSyncs.push(s.latencyMs));
-      u.stats.leaderboardSyncs.forEach((l) => allLeaderboardSyncs.push(l.latencyMs));
+      allAnswerLatencies.push(...u.answerLatencies);
+      u.sessionSyncs.forEach((s) => allSessionSyncs.push(s.latencyMs));
+      u.leaderboardSyncs.forEach((l) => allLeaderboardSyncs.push(l.latencyMs));
 
-      currentActiveListeners += u.stats.activeListenersCount;
-      peakActiveListeners += (u.stats.peakListenersCount || u.stats.activeListenersCount);
+      currentActiveListeners += u.activeListenersCount;
+      peakActiveListeners += (u.peakListenersCount || u.activeListenersCount);
 
       userBreakdown.push({
-        userId: u.id,
-        participantId: u.participantId,
-        answersSubmitted: u.stats.answersSuccessful,
-        success: u.stats.answersSuccessful === 5
+        userId: u.userId,
+        participantId: `LOADTEST-${u.userId}`,
+        answersSubmitted: u.answersSuccessful,
+        success: u.answersSuccessful === 5
       });
 
-      u.stats.errors.forEach((e) => {
+      u.errors.forEach((e) => {
         const typeKey = e.type as keyof typeof errorsBreakdown;
         if (errorsBreakdown[typeKey] !== undefined) {
           errorsBreakdown[typeKey]++;
@@ -187,7 +261,7 @@ export class LoadTestRunner {
     const expectedAnswersPerUser = 5;
     const expectedAnswers = totalUsersJoined * expectedAnswersPerUser;
     const usersFullyCompleted = userBreakdown.filter((u) => u.answersSubmitted === 5).length;
-    const isComplete = (successfulAnswers >= expectedAnswers && usersFullyCompleted === totalUsersJoined);
+    const isComplete = (successfulAnswers >= expectedAnswers && usersFullyCompleted === totalUsersJoined && totalUsersJoined === this.targetUsersCount);
 
     const answerDurations = allAnswerLatencies.map((m) => m.durationMs).sort((a, b) => a - b);
     const avgAnswerMs = answerDurations.length ? answerDurations.reduce((a, b) => a + b, 0) / answerDurations.length : 0;
@@ -207,11 +281,13 @@ export class LoadTestRunner {
 
     // Calculate exact Firestore operation workload
     const firestoreDocWrites = totalUsersJoined + successfulAnswers;
-    const firestoreDocReadsEstimate = totalUsersJoined * 4;
+    const firestoreDocReadsEstimate = totalUsersJoined * 3; // 3 initial snapshot reads per participant
 
     return {
       eventId: this.eventId,
       scenarioName: this.scenarioName,
+      workersCount,
+      usersPerWorker: this.usersPerWorker,
       totalUsersRequested: this.targetUsersCount,
       totalUsersJoined,
       totalUsersFailedToJoin,
@@ -270,6 +346,7 @@ export class LoadTestRunner {
     console.log("==================================================");
     console.log(`Target Event ID:      ${summary.eventId}`);
     console.log(`Scenario:             ${summary.scenarioName}`);
+    console.log(`Worker Processes:     ${summary.workersCount} (${summary.usersPerWorker} users/worker max)`);
     console.log(`Duration:             ${(summary.durationMs / 1000).toFixed(1)}s`);
 
     console.log("\n--- COMPLETION VALIDATION ---");
@@ -281,12 +358,6 @@ export class LoadTestRunner {
     console.log(`Expected Total Answers: ${summary.completion.expectedAnswers} (${summary.totalUsersJoined} users × 5 questions)`);
     console.log(`Actual Total Answers:   ${summary.completion.actualAnswers}`);
     console.log(`Users Completed (5/5):  ${summary.completion.usersFullyCompleted} / ${summary.totalUsersJoined}`);
-
-    console.log("\n--- INDIVIDUAL USER BREAKDOWN ---");
-    summary.completion.userBreakdown.forEach((u) => {
-      const statusSymbol = u.success ? "✅ OK" : "❌ INCOMPLETE";
-      console.log(`${u.participantId}: ${u.answersSubmitted}/5 answers [${statusSymbol}]`);
-    });
 
     console.log("\n--- VIRTUAL USERS ---");
     console.log(`Requested:            ${summary.totalUsersRequested}`);

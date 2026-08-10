@@ -87,18 +87,22 @@ export class VirtualUser {
         if (!snapshot.exists()) return;
         const data = snapshot.data();
 
-        // Track session sync latency using production session timestamps (questionStartTime or startedAt or updatedAt)
-        const sessionTimeMs = data.questionStartTime 
-          || data.startedAt 
-          || (typeof data.updatedAt?.toMillis === "function" ? data.updatedAt.toMillis() : (typeof data.updatedAt === "number" ? data.updatedAt : null));
+        // Track session sync latency using the stage transition timestamp (updatedAt)
+        const sessionTimeMs = typeof data.updatedAt?.toMillis === "function" 
+          ? data.updatedAt.toMillis() 
+          : (typeof data.updatedAt === "number" ? data.updatedAt : null);
 
         if (sessionTimeMs) {
-          const latencyMs = Math.max(0, Date.now() - sessionTimeMs);
-          this.stats.sessionSyncs.push({
-            latencyMs,
-            timestamp: Date.now(),
-            type: "session"
-          });
+          const now = Date.now();
+          const latencyMs = now - sessionTimeMs;
+          // Filter out stale timestamps from previous runs or negative clock skew
+          if (latencyMs >= 0 && latencyMs <= 60000) {
+            this.stats.sessionSyncs.push({
+              latencyMs,
+              timestamp: now,
+              type: "session"
+            });
+          }
         }
 
         // If active question stage, schedule answer submission for that specific question index
@@ -121,19 +125,24 @@ export class VirtualUser {
     const unsubLb = onSnapshot(
       qLb,
       (snapshot) => {
-        let maxLatency = 0;
+        let maxLatency = -1;
+        const now = Date.now();
         snapshot.forEach((docSnap) => {
           const data = docSnap.data();
           if (data.lastAnswerTime) {
-            const latency = Math.max(0, Date.now() - data.lastAnswerTime);
-            if (latency > maxLatency) maxLatency = latency;
+            const diff = now - data.lastAnswerTime;
+            if (diff >= 0 && diff <= 60000) {
+              if (diff > maxLatency) maxLatency = diff;
+            }
           }
         });
-        this.stats.leaderboardSyncs.push({
-          latencyMs: maxLatency,
-          timestamp: Date.now(),
-          type: "leaderboard"
-        });
+        if (maxLatency >= 0) {
+          this.stats.leaderboardSyncs.push({
+            latencyMs: maxLatency,
+            timestamp: now,
+            type: "leaderboard"
+          });
+        }
       },
       (err) => {
         this.recordError(err, "leaderboard_listener");

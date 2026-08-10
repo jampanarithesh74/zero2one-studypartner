@@ -11,16 +11,32 @@ function cleanPayload<T extends Record<string, any>>(obj: T): Record<string, any
   return cleaned;
 }
 
+export interface SessionDriverOptions {
+  questionDurationSec?: number;
+  revealDurationSec?: number;
+  leaderboardDurationSec?: number;
+}
+
 export class QuizSessionDriver {
   private db: Firestore;
   private eventId: string;
   private questionDurationSec: number;
+  private revealDurationSec: number;
+  private leaderboardDurationSec: number;
   private running: boolean = false;
 
-  constructor(db: Firestore, eventId: string, questionDurationSec: number = 6) {
+  constructor(db: Firestore, eventId: string, options: SessionDriverOptions | number = {}) {
     this.db = db;
     this.eventId = eventId;
-    this.questionDurationSec = questionDurationSec;
+    if (typeof options === "number") {
+      this.questionDurationSec = options;
+      this.revealDurationSec = 3;
+      this.leaderboardDurationSec = 3;
+    } else {
+      this.questionDurationSec = options.questionDurationSec || 12;
+      this.revealDurationSec = options.revealDurationSec || 3;
+      this.leaderboardDurationSec = options.leaderboardDurationSec || 3;
+    }
   }
 
   public async driveSession(): Promise<void> {
@@ -29,6 +45,7 @@ export class QuizSessionDriver {
     const sessionStartedAt = Date.now();
 
     console.log(`\n🏎️ [SessionDriver] Starting automated 5-question Quiz lifecycle for event: ${this.eventId}`);
+    console.log(`   [Config] Question Duration: ${this.questionDurationSec}s | Reveal: ${this.revealDurationSec}s | Leaderboard: ${this.leaderboardDurationSec}s`);
 
     for (let qIndex = 0; qIndex < DEMO_QUIZ_QUESTIONS.length; qIndex++) {
       if (!this.running) break;
@@ -65,7 +82,7 @@ export class QuizSessionDriver {
         updatedAt: Date.now()
       }));
 
-      await this.sleep(2000);
+      await this.sleep(this.revealDurationSec * 1000);
 
       if (!this.running) break;
 
@@ -76,7 +93,7 @@ export class QuizSessionDriver {
         updatedAt: Date.now()
       }));
 
-      await this.sleep(2000);
+      await this.sleep(this.leaderboardDurationSec * 1000);
     }
 
     if (this.running) {
