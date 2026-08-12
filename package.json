@@ -10,7 +10,8 @@
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
     "loadtest": "tsx load-tests/run-quiz-loadtest.ts",
-    "loadtest:cleanup": "tsx load-tests/cleanup.ts"
+    "loadtest:cleanup": "tsx load-tests/cleanup.ts",
+    "vercel-loadtest": "tsx vercel-load-tests/run-vercel-loadtest.ts"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
