@@ -166,6 +166,7 @@ export class VercelLoadTestRunner {
       targetUrl: this.options.url,
       scenarioName: this.options.scenarioName || "CUSTOM",
       concurrency: this.options.concurrency,
+      timeoutMs: this.options.timeoutMs,
       totalRequestsRequested: requestsRequested,
       totalRequestsCompleted: completed,
       successfulRequests: successful,
@@ -208,6 +209,7 @@ export class VercelLoadTestRunner {
     console.log(`Target URL:     ${s.targetUrl}`);
     console.log(`Scenario:       ${s.scenarioName}`);
     console.log(`Concurrency:    ${s.concurrency} virtual users`);
+    console.log(`Timeout Config: ${s.timeoutMs} ms`);
     console.log(`Total Requests: ${s.totalRequestsCompleted}`);
     console.log(`Successful:     ${s.successfulRequests}`);
     console.log(`Failed:         ${s.failedRequests}`);

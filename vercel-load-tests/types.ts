@@ -36,6 +36,7 @@ export interface VercelLoadTestSummary {
   targetUrl: string;
   scenarioName: string;
   concurrency: number;
+  timeoutMs: number;
   totalRequestsRequested: number;
   totalRequestsCompleted: number;
   successfulRequests: number;

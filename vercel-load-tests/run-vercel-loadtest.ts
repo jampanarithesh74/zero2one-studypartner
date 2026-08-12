@@ -1,13 +1,23 @@
 import { VercelLoadTestRunner } from "./runner.js";
 import { SCENARIOS } from "./types.js";
 
+function sanitizeUrl(rawUrl: string): string {
+  let url = rawUrl.trim();
+  const mdMatch = url.match(/\[.*?\]\((https?:\/\/[^\)]+)\)/);
+  if (mdMatch) {
+    url = mdMatch[1];
+  }
+  url = url.replace(/^["'<\[]+|["'>\]]+$/g, "");
+  return url;
+}
+
 async function main() {
   let targetUrl = "https://zero2one-studypartner.vercel.app/api/health";
   let scenarioKey: string | undefined = undefined;
   let customUsers: number | undefined = undefined;
   let customRequests: number | undefined = undefined;
   let customDuration: number | undefined = undefined;
-  let timeoutMs = 10000;
+  let timeoutMs = 30000;
 
   process.argv.forEach((arg) => {
     if (arg.startsWith("--url=")) {
@@ -24,6 +34,8 @@ async function main() {
       timeoutMs = parseInt(arg.split("=")[1], 10);
     }
   });
+
+  targetUrl = sanitizeUrl(targetUrl);
 
   const preset = scenarioKey && SCENARIOS[scenarioKey] ? SCENARIOS[scenarioKey] : undefined;
 
