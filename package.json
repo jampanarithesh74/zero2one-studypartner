@@ -11,7 +11,8 @@
     "lint": "tsc --noEmit",
     "loadtest": "tsx load-tests/run-quiz-loadtest.ts",
     "loadtest:cleanup": "tsx load-tests/cleanup.ts",
-    "vercel-loadtest": "tsx vercel-load-tests/run-vercel-loadtest.ts"
+    "vercel-loadtest": "tsx vercel-load-tests/run-vercel-loadtest.ts",
+    "e2e-loadtest": "tsx e2e-load-tests/run-e2e-loadtest.ts"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
