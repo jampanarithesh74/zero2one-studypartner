@@ -13,12 +13,159 @@ import {
   Firestore,
   Unsubscribe
 } from "firebase/firestore";
+import { db } from "../lib/firebase";
 import {
   getCrosswordFirestore,
   getRiddleFirestore,
   isCrosswordConfigured,
   isRiddleConfigured,
 } from "../lib/firebaseProjects";
+
+// ============================================================================
+// ACTIVE BROADCAST & STAGE SYNCHRONIZATION (PROJECT 1)
+// ============================================================================
+
+export interface CrosswordBroadcastState {
+  puzzleIndex: number; // 0 for Crossword 1, 1 for Crossword 2
+  puzzleId: string;
+  stage: "active" | "frozen" | "reveal" | "leaderboard";
+  isRevealed: boolean;
+  isFrozen: boolean;
+  updatedAt?: number;
+}
+
+export interface RiddleBroadcastState {
+  riddleIndex: number; // 0 to 4 (Riddles 1 to 5)
+  riddleId: number;
+  stage: "active" | "frozen" | "reveal" | "leaderboard";
+  isRevealed: boolean;
+  isFrozen: boolean;
+  updatedAt?: number;
+}
+
+export interface ActiveBroadcastData {
+  activeActivity: "none" | "quiz" | "crossword" | "riddles";
+  crossword?: CrosswordBroadcastState;
+  riddles?: RiddleBroadcastState;
+  updatedAt?: any;
+}
+
+export const BroadcastService = {
+  subscribe(eventId: string, callback: (broadcast: ActiveBroadcastData | null) => void): Unsubscribe {
+    if (!eventId) {
+      callback(null);
+      return () => {};
+    }
+    const broadcastRef = doc(db, "events", eventId, "activities", "activeBroadcast");
+    return onSnapshot(
+      broadcastRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          callback(docSnap.data() as ActiveBroadcastData);
+        } else {
+          callback(null);
+        }
+      },
+      (err) => {
+        console.warn("[BroadcastService] Listener warning:", err);
+        callback(null);
+      }
+    );
+  },
+
+  async setBroadcast(eventId: string, data: Partial<ActiveBroadcastData>): Promise<void> {
+    if (!eventId) return;
+    const broadcastRef = doc(db, "events", eventId, "activities", "activeBroadcast");
+    await setDoc(
+      broadcastRef,
+      {
+        ...data,
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
+  },
+
+  async broadcastCrossword(
+    eventId: string,
+    puzzleIndex: number,
+    puzzleId: string,
+    stage: "active" | "frozen" | "reveal" | "leaderboard" = "active",
+    isRevealed: boolean = false,
+    isFrozen: boolean = false
+  ): Promise<void> {
+    const crosswordState: CrosswordBroadcastState = {
+      puzzleIndex,
+      puzzleId,
+      stage,
+      isRevealed,
+      isFrozen,
+      updatedAt: Date.now(),
+    };
+    await this.setBroadcast(eventId, {
+      activeActivity: "crossword",
+      crossword: crosswordState,
+    });
+  },
+
+  async broadcastRiddle(
+    eventId: string,
+    riddleIndex: number,
+    riddleId: number,
+    stage: "active" | "frozen" | "reveal" | "leaderboard" = "active",
+    isRevealed: boolean = false,
+    isFrozen: boolean = false
+  ): Promise<void> {
+    const riddleState: RiddleBroadcastState = {
+      riddleIndex,
+      riddleId,
+      stage,
+      isRevealed,
+      isFrozen,
+      updatedAt: Date.now(),
+    };
+    await this.setBroadcast(eventId, {
+      activeActivity: "riddles",
+      riddles: riddleState,
+    });
+  },
+
+  async updateCrosswordState(
+    eventId: string,
+    updates: Partial<CrosswordBroadcastState>
+  ): Promise<void> {
+    if (!eventId) return;
+    const broadcastRef = doc(db, "events", eventId, "activities", "activeBroadcast");
+    const updateObj: Record<string, any> = {
+      updatedAt: serverTimestamp(),
+    };
+    Object.entries(updates).forEach(([key, val]) => {
+      updateObj[`crossword.${key}`] = val;
+    });
+    await updateDoc(broadcastRef, updateObj);
+  },
+
+  async updateRiddleState(
+    eventId: string,
+    updates: Partial<RiddleBroadcastState>
+  ): Promise<void> {
+    if (!eventId) return;
+    const broadcastRef = doc(db, "events", eventId, "activities", "activeBroadcast");
+    const updateObj: Record<string, any> = {
+      updatedAt: serverTimestamp(),
+    };
+    Object.entries(updates).forEach(([key, val]) => {
+      updateObj[`riddles.${key}`] = val;
+    });
+    await updateDoc(broadcastRef, updateObj);
+  },
+
+  async clearBroadcast(eventId: string): Promise<void> {
+    await this.setBroadcast(eventId, {
+      activeActivity: "none",
+    });
+  }
+};
 
 // ============================================================================
 // CROSSWORD DATA TYPES & SERVICE (PROJECT 2)

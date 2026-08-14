@@ -5,52 +5,63 @@ import {
   Sparkles, 
   CheckCircle2, 
   Lightbulb, 
-  ChevronRight, 
-  ChevronLeft, 
   RotateCcw, 
   Trophy, 
   AlertCircle,
   Eye,
   Send,
   Loader2,
-  Database
+  Database,
+  Lock,
+  Radio
 } from "lucide-react";
 import { RIDDLE_ACTIVITIES, RiddleItem } from "../../data/engineeringFailureData";
 import { Participant } from "../ParticipantOnboarding";
-import { RiddleService, RiddleLeaderboardEntry } from "../../services/activityService";
+import { RiddleService, RiddleLeaderboardEntry, RiddleBroadcastState } from "../../services/activityService";
 import { isRiddleConfigured } from "../../lib/firebaseProjects";
 
 interface RiddleActivityViewProps {
   eventId: string;
   currentParticipant?: (Participant & { id: string }) | null;
   isAdmin?: boolean;
+  broadcast?: RiddleBroadcastState;
 }
 
 export function RiddleActivityView({
   eventId,
   currentParticipant,
   isAdmin = false,
+  broadcast,
 }: RiddleActivityViewProps) {
-  const [currentRiddleIdx, setCurrentRiddleIdx] = useState<number>(0);
+  // If participant, current riddle is strictly controlled by admin broadcast
+  const [internalRiddleIdx, setInternalRiddleIdx] = useState<number>(0);
+  const currentRiddleIdx = !isAdmin && broadcast ? broadcast.riddleIndex : internalRiddleIdx;
   const riddle = RIDDLE_ACTIVITIES[currentRiddleIdx] || RIDDLE_ACTIVITIES[0];
 
   // Character boxes state for the current riddle
   const answerLength = riddle.answer.length;
   const [letters, setLetters] = useState<string[]>(Array(answerLength).fill(""));
   const [showHint, setShowHint] = useState<boolean>(false);
-  const [isRevealed, setIsRevealed] = useState<boolean>(false);
+  const [adminRevealed, setAdminRevealed] = useState<boolean>(false);
   const [isCorrect, setIsCorrect] = useState<boolean>(false);
+  const [isSubmittedLocal, setIsSubmittedLocal] = useState<boolean>(false);
   const [feedbackMsg, setFeedbackMsg] = useState<{ text: string; type: "success" | "error" | "info" } | null>(null);
   const [solvedRiddles, setSolvedRiddles] = useState<Record<number, boolean>>({});
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
-  const [viewMode, setViewMode] = useState<"riddle" | "leaderboard">("riddle");
+  const [internalViewMode, setInternalViewMode] = useState<"riddle" | "leaderboard">("riddle");
   const [leaderboard, setLeaderboard] = useState<RiddleLeaderboardEntry[]>([]);
 
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
+  // Effective reveal & freeze states
+  const isRevealedEffective = (!isAdmin && broadcast?.isRevealed) || (isAdmin && adminRevealed) || broadcast?.stage === "reveal";
+  const isFrozenEffective = (!isAdmin && (broadcast?.isFrozen || broadcast?.stage === "frozen" || isSubmittedLocal));
+  const viewMode = (!isAdmin && broadcast?.stage === "leaderboard") ? "leaderboard" : internalViewMode;
+
   // Load progress for this riddle
   useEffect(() => {
     const savedKey = `z2o_riddle_${eventId}_${riddle.id}_${currentParticipant?.id || "local"}`;
+    const submitKey = `z2o_riddle_sub_${eventId}_${riddle.id}_${currentParticipant?.id || "local"}`;
     try {
       const raw = localStorage.getItem(savedKey);
       if (raw) {
@@ -60,22 +71,20 @@ export function RiddleActivityView({
         } else {
           setLetters(Array(answerLength).fill(""));
         }
-        if (parsed.isCorrect) {
-          setIsCorrect(true);
-        } else {
-          setIsCorrect(false);
-        }
+        setIsCorrect(Boolean(parsed.isCorrect));
       } else {
         setLetters(Array(answerLength).fill(""));
         setIsCorrect(false);
       }
+      setIsSubmittedLocal(localStorage.getItem(submitKey) === "true");
     } catch (e) {
       setLetters(Array(answerLength).fill(""));
       setIsCorrect(false);
+      setIsSubmittedLocal(false);
     }
 
     setShowHint(false);
-    setIsRevealed(false);
+    setAdminRevealed(false);
     setFeedbackMsg(null);
   }, [riddle.id, eventId, answerLength, currentParticipant?.id]);
 
@@ -88,8 +97,9 @@ export function RiddleActivityView({
     return () => unsub();
   }, [eventId]);
 
-  // Handle letter input (Local only - Zero Firestore writes per keystroke!)
+  // Handle letter input
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, idx: number) => {
+    if (isFrozenEffective) return;
     const key = e.key;
 
     if (key === "Backspace") {
@@ -131,16 +141,11 @@ export function RiddleActivityView({
       }
 
       saveLocalProgress(newLetters, isCorrect);
-
-      // If user filled the last box, automatically verify
-      const fullWord = newLetters.join("");
-      if (fullWord.length === answerLength && !newLetters.includes("")) {
-        checkWord(fullWord);
-      }
     }
   };
 
   const saveLocalProgress = (curLetters: string[], correctStatus: boolean) => {
+    if (isFrozenEffective && !isAdmin) return;
     const savedKey = `z2o_riddle_${eventId}_${riddle.id}_${currentParticipant?.id || "local"}`;
     try {
       localStorage.setItem(savedKey, JSON.stringify({ letters: curLetters, isCorrect: correctStatus }));
@@ -150,7 +155,10 @@ export function RiddleActivityView({
   };
 
   // Check word & Write ONE atomic submission to Project 3 (Riddle Firestore)
+  // Freezes answer right away upon submit
   const checkWord = async (inputWord: string) => {
+    if (isFrozenEffective && !isAdmin) return;
+
     const cleanInput = inputWord.toUpperCase().trim();
     const cleanTarget = riddle.answer.toUpperCase().trim();
     const correct = cleanInput === cleanTarget;
@@ -159,16 +167,27 @@ export function RiddleActivityView({
       setIsCorrect(true);
       setSolvedRiddles((prev) => ({ ...prev, [riddle.id]: true }));
       setFeedbackMsg({
-        text: `🎯 Phenomenal! "${cleanTarget}" is correct!`,
+        text: `🎯 Phenomenal! Your answer has been submitted and locked in.`,
         type: "success",
       });
       saveLocalProgress(letters, true);
     } else {
       setIsCorrect(false);
       setFeedbackMsg({
-        text: `Not quite! Check the clues, or click Hint for engineering context.`,
-        type: "error",
+        text: `Answer submitted & locked. (${cleanInput})`,
+        type: "info",
       });
+    }
+
+    // Freeze participant submission locally
+    if (!isAdmin) {
+      setIsSubmittedLocal(true);
+      const submitKey = `z2o_riddle_sub_${eventId}_${riddle.id}_${currentParticipant?.id || "local"}`;
+      try {
+        localStorage.setItem(submitKey, "true");
+      } catch (e) {
+        console.warn("Could not save submit state:", e);
+      }
     }
 
     // Submit to Project 3 (Riddle Firestore)
@@ -200,6 +219,7 @@ export function RiddleActivityView({
   };
 
   const handleManualSubmit = () => {
+    if (isFrozenEffective && !isAdmin) return;
     const fullWord = letters.join("");
     if (fullWord.length < answerLength || letters.includes("")) {
       setFeedbackMsg({
@@ -212,21 +232,15 @@ export function RiddleActivityView({
   };
 
   const handleReset = () => {
+    if (isFrozenEffective && !isAdmin) return;
     const empty = Array(answerLength).fill("");
     setLetters(empty);
     setIsCorrect(false);
-    setIsRevealed(false);
+    setAdminRevealed(false);
     setFeedbackMsg(null);
     saveLocalProgress(empty, false);
     inputRefs.current[0]?.focus();
   };
-
-  const handleRevealSolution = () => {
-    setIsRevealed(true);
-    setLetters(riddle.answer.split(""));
-  };
-
-  const totalSolved = Object.values(solvedRiddles).filter(Boolean).length;
 
   return (
     <div className="flex flex-col h-full bg-[#121212] border border-neutral-800/90 rounded-2xl overflow-hidden shadow-xl text-left font-sans">
@@ -235,77 +249,66 @@ export function RiddleActivityView({
         <div className="flex items-center gap-2">
           <span className="text-base">❓</span>
           <div>
-            <h2 className="text-xs font-black uppercase tracking-wider text-white">
-              Engineering Riddles Challenge
+            <h2 className="text-xs font-black uppercase tracking-wider text-white flex items-center gap-2">
+              <span>Engineering Riddles Challenge</span>
+              {isFrozenEffective && !isAdmin && (
+                <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-bold bg-amber-500/15 border border-amber-500/30 text-amber-400 inline-flex items-center gap-1">
+                  <Lock size={10} />
+                  <span>LOCKED</span>
+                </span>
+              )}
             </h2>
             <span className="text-[10px] text-neutral-400 font-medium block">
-              Riddle {currentRiddleIdx + 1} of {RIDDLE_ACTIVITIES.length} • {totalSolved}/{RIDDLE_ACTIVITIES.length} Solved
+              Riddle {currentRiddleIdx + 1} of {RIDDLE_ACTIVITIES.length}
             </span>
           </div>
         </div>
 
-        {/* Navigation, Standings & Project 3 Badge */}
+        {/* Navigation & Status */}
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1 bg-neutral-950 p-1 rounded-xl border border-neutral-800">
-            <button
-              type="button"
-              disabled={currentRiddleIdx === 0}
-              onClick={() => {
-                setCurrentRiddleIdx((p) => Math.max(0, p - 1));
-                setViewMode("riddle");
-              }}
-              className="p-1 rounded-lg text-neutral-400 hover:text-white disabled:opacity-30 disabled:pointer-events-none cursor-pointer transition-all"
-              title="Previous Riddle"
-            >
-              <ChevronLeft size={16} />
-            </button>
+          {isAdmin ? (
+            <div className="flex items-center gap-1 bg-neutral-950 p-1 rounded-xl border border-neutral-800">
+              {RIDDLE_ACTIVITIES.map((r, idx) => (
+                <button
+                  key={r.id}
+                  type="button"
+                  onClick={() => {
+                    setInternalRiddleIdx(idx);
+                    setInternalViewMode("riddle");
+                  }}
+                  className={`w-6 h-6 rounded-lg text-[10px] font-mono font-bold transition-all flex items-center justify-center cursor-pointer ${
+                    currentRiddleIdx === idx && viewMode === "riddle"
+                      ? "bg-orange-500 text-white shadow-md"
+                      : solvedRiddles[r.id]
+                      ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                      : "bg-neutral-900 text-neutral-400 hover:text-neutral-200"
+                  }`}
+                >
+                  {idx + 1}
+                </button>
+              ))}
 
-            {RIDDLE_ACTIVITIES.map((r, idx) => (
               <button
-                key={r.id}
                 type="button"
-                onClick={() => {
-                  setCurrentRiddleIdx(idx);
-                  setViewMode("riddle");
-                }}
-                className={`w-6 h-6 rounded-lg text-[10px] font-mono font-bold transition-all flex items-center justify-center cursor-pointer ${
-                  currentRiddleIdx === idx && viewMode === "riddle"
-                    ? "bg-orange-500 text-white shadow-md"
-                    : solvedRiddles[r.id]
-                    ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-                    : "bg-neutral-900 text-neutral-400 hover:text-neutral-200"
+                onClick={() => setInternalViewMode(viewMode === "leaderboard" ? "riddle" : "leaderboard")}
+                className={`px-2 py-1 rounded-lg text-[10px] font-mono font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                  viewMode === "leaderboard"
+                    ? "bg-amber-500 text-slate-950 shadow-sm"
+                    : "text-neutral-400 hover:text-amber-400"
                 }`}
               >
-                {idx + 1}
+                <Trophy size={11} />
+                <span>Standings</span>
               </button>
-            ))}
-
-            <button
-              type="button"
-              disabled={currentRiddleIdx === RIDDLE_ACTIVITIES.length - 1}
-              onClick={() => {
-                setCurrentRiddleIdx((p) => Math.min(RIDDLE_ACTIVITIES.length - 1, p + 1));
-                setViewMode("riddle");
-              }}
-              className="p-1 rounded-lg text-neutral-400 hover:text-white disabled:opacity-30 disabled:pointer-events-none cursor-pointer transition-all"
-              title="Next Riddle"
-            >
-              <ChevronRight size={16} />
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setViewMode(viewMode === "leaderboard" ? "riddle" : "leaderboard")}
-              className={`px-2 py-1 rounded-lg text-[10px] font-mono font-bold transition-all cursor-pointer flex items-center gap-1 ${
-                viewMode === "leaderboard"
-                  ? "bg-amber-500 text-slate-950 shadow-sm"
-                  : "text-neutral-400 hover:text-amber-400"
-              }`}
-            >
-              <Trophy size={11} />
-              <span>Standings</span>
-            </button>
-          </div>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="px-2.5 py-1 rounded-lg bg-orange-500/15 border border-orange-500/30 text-orange-400 text-[10px] font-mono font-black uppercase tracking-wider flex items-center gap-1.5">
+                <Radio size={11} className="animate-pulse text-orange-400" />
+                <span>QUESTION {currentRiddleIdx + 1} LIVE</span>
+              </span>
+            </div>
+          )}
 
           <span
             className={`px-2 py-0.5 rounded-full text-[9px] font-mono font-bold border hidden sm:inline-flex items-center gap-1 ${
@@ -313,14 +316,9 @@ export function RiddleActivityView({
                 ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
                 : "bg-amber-500/10 text-amber-400 border-amber-500/30"
             }`}
-            title={
-              isRiddleConfigured
-                ? "Project 3 (Riddle Firestore) Isolated"
-                : "Project 3 configuration needed for multi-project isolation"
-            }
           >
             <Database size={9} />
-            <span>{isRiddleConfigured ? "PROJECT 3 ACTIVE" : "PROJECT 3 PENDING"}</span>
+            <span>PROJECT 3</span>
           </span>
         </div>
       </div>
@@ -333,13 +331,15 @@ export function RiddleActivityView({
               <Trophy size={16} className="text-amber-400" />
               <span>Riddle Challenge Standings (Project 3 Isolated)</span>
             </h3>
-            <button
-              type="button"
-              onClick={() => setViewMode("riddle")}
-              className="text-xs font-mono font-bold text-orange-400 hover:underline cursor-pointer"
-            >
-              ← Back to Riddles
-            </button>
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => setInternalViewMode("riddle")}
+                className="text-xs font-mono font-bold text-orange-400 hover:underline cursor-pointer"
+              >
+                ← Back to Riddles
+              </button>
+            )}
           </div>
 
           {leaderboard.length === 0 ? (
@@ -407,7 +407,7 @@ export function RiddleActivityView({
 
                 {/* Riddle Text */}
                 <div className="relative z-10 my-auto py-2">
-                  <p className="text-base sm:text-lg font-black text-white tracking-tight leading-relaxed italic">
+                  <p className="text-base sm:text-lg md:text-xl font-black text-white tracking-tight leading-relaxed italic">
                     "{riddle.riddleText}"
                   </p>
                 </div>
@@ -442,12 +442,12 @@ export function RiddleActivityView({
               {/* Character-Box Inputs */}
               <div className="flex flex-col items-center justify-center space-y-4">
                 <span className="text-[11px] font-mono font-bold text-neutral-400 uppercase tracking-wider block">
-                  Enter Your Solution
+                  {isRevealedEffective ? "Revealed Answer" : "Enter Your Solution"}
                 </span>
 
                 <div className="flex items-center justify-center gap-2 sm:gap-3 flex-wrap">
                   {Array.from({ length: answerLength }).map((_, idx) => {
-                    const letterVal = isRevealed ? riddle.answer[idx] : letters[idx] || "";
+                    const letterVal = isRevealedEffective ? riddle.answer[idx] : letters[idx] || "";
                     return (
                       <input
                         key={idx}
@@ -456,18 +456,19 @@ export function RiddleActivityView({
                         }}
                         type="text"
                         maxLength={1}
+                        disabled={isFrozenEffective}
                         value={letterVal}
-                        onChange={() => {}} // handled via keydown
+                        onChange={() => {}}
                         onKeyDown={(e) => handleKeyDown(e, idx)}
                         className={`w-10 h-12 sm:w-12 sm:h-14 rounded-xl text-center font-mono font-black text-lg sm:text-xl uppercase outline-none transition-all border shadow-lg ${
                           isCorrect
                             ? "bg-emerald-500/20 border-emerald-500 text-emerald-300 ring-2 ring-emerald-500/40"
-                            : isRevealed
+                            : isRevealedEffective
                             ? "bg-neutral-900 border-amber-500/60 text-amber-300"
                             : letterVal
                             ? "bg-neutral-900 border-orange-500 text-white ring-2 ring-orange-500/30"
                             : "bg-neutral-950 border-neutral-800 hover:border-neutral-700 text-white focus:border-orange-500 focus:ring-2 focus:ring-orange-500/40"
-                        }`}
+                        } ${isFrozenEffective ? "cursor-not-allowed opacity-90" : ""}`}
                       />
                     );
                   })}
@@ -494,68 +495,68 @@ export function RiddleActivityView({
                 </div>
               )}
 
-              {(isCorrect || isRevealed) && (
+              {isRevealedEffective && (
                 <motion.div
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="p-4 rounded-xl bg-neutral-900 border border-neutral-800 text-xs text-neutral-300 leading-relaxed space-y-1"
+                  className="p-4 rounded-xl bg-neutral-900 border border-orange-500/30 text-xs text-neutral-300 leading-relaxed space-y-1"
                 >
                   <span className="font-mono font-black text-orange-400 uppercase tracking-widest block text-[10px]">
                     Technical Explanation
                   </span>
-                  <p>{riddle.explanation}</p>
+                  <p className="text-white">{riddle.explanation}</p>
                 </motion.div>
               )}
 
               {/* Bottom Actions */}
               <div className="pt-3 border-t border-neutral-800/90 flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleManualSubmit}
-                    disabled={isSubmitting}
-                    className="px-5 py-2.5 rounded-xl bg-orange-500 hover:bg-orange-600 active:scale-95 text-white font-black text-xs uppercase tracking-wider transition-all cursor-pointer shadow-lg flex items-center gap-1.5 border border-orange-400/30 disabled:opacity-50"
-                  >
-                    {isSubmitting ? (
-                      <Loader2 size={13} className="animate-spin" />
-                    ) : (
-                      <Send size={13} />
-                    )}
-                    <span>Submit Answer</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleReset}
-                    className="px-3 py-2.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-300 hover:text-white text-xs font-bold transition-all cursor-pointer border border-neutral-800 flex items-center gap-1"
-                    title="Clear letters"
-                  >
-                    <RotateCcw size={13} />
-                    <span className="hidden sm:inline">Clear</span>
-                  </button>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleRevealSolution}
-                    className="px-3 py-2.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-400 hover:text-amber-400 text-xs font-bold transition-all cursor-pointer border border-neutral-800 flex items-center gap-1"
-                  >
-                    <Eye size={13} />
-                    <span>Reveal Answer</span>
-                  </button>
-
-                  {currentRiddleIdx < RIDDLE_ACTIVITIES.length - 1 && (
+                  {!isFrozenEffective ? (
                     <button
                       type="button"
-                      onClick={() => setCurrentRiddleIdx((p) => p + 1)}
-                      className="px-4 py-2.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-black transition-all cursor-pointer flex items-center gap-1"
+                      onClick={handleManualSubmit}
+                      disabled={isSubmitting}
+                      className="px-5 py-2.5 rounded-xl bg-orange-500 hover:bg-orange-600 active:scale-95 text-white font-black text-xs uppercase tracking-wider transition-all cursor-pointer shadow-lg flex items-center gap-1.5 border border-orange-400/30 disabled:opacity-50"
                     >
-                      <span>Next Riddle</span>
-                      <ChevronRight size={14} />
+                      {isSubmitting ? (
+                        <Loader2 size={13} className="animate-spin" />
+                      ) : (
+                        <Send size={13} />
+                      )}
+                      <span>Submit Answer</span>
+                    </button>
+                  ) : (
+                    <div className="px-4 py-2 rounded-xl bg-neutral-900 border border-amber-500/30 text-amber-300 text-xs font-mono font-bold flex items-center gap-1.5">
+                      <Lock size={13} className="text-amber-400" />
+                      <span>Answer Locked In</span>
+                    </div>
+                  )}
+
+                  {!isFrozenEffective && (
+                    <button
+                      type="button"
+                      onClick={handleReset}
+                      className="px-3 py-2.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-300 hover:text-white text-xs font-bold transition-all cursor-pointer border border-neutral-800 flex items-center gap-1"
+                      title="Clear letters"
+                    >
+                      <RotateCcw size={13} />
+                      <span className="hidden sm:inline">Clear</span>
                     </button>
                   )}
                 </div>
+
+                {isAdmin && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setAdminRevealed((p) => !p)}
+                      className="px-3 py-2.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-400 hover:text-amber-400 text-xs font-bold transition-all cursor-pointer border border-neutral-800 flex items-center gap-1"
+                    >
+                      <Eye size={13} />
+                      <span>{adminRevealed ? "Hide Answer" : "Reveal Answer"}</span>
+                    </button>
+                  </div>
+                )}
               </div>
             </motion.div>
           </AnimatePresence>

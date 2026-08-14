@@ -28,6 +28,7 @@ import { QuizModeCard } from "../events/QuizModeCard";
 import { QuizSessionData } from "../../data/quizQuestions";
 import { CrosswordActivityView } from "../events/CrosswordActivityView";
 import { RiddleActivityView } from "../events/RiddleActivityView";
+import { ActiveBroadcastData, BroadcastService } from "../../services/activityService";
 
 export interface ActiveQuestionData {
   question: string;
@@ -61,25 +62,16 @@ export function LiveRoomPanel({
 }: LiveRoomPanelProps) {
   const [activeQuestion, setActiveQuestion] = useState<ActiveQuestionData | null>(null);
   const [quizSession, setQuizSession] = useState<QuizSessionData | null>(null);
-  const [activeBroadcast, setActiveBroadcast] = useState<{ activeActivity?: "quiz" | "crossword" | "riddles" | "none" } | null>(null);
+  const [activeBroadcast, setActiveBroadcast] = useState<ActiveBroadcastData | null>(null);
   const [answers, setAnswers] = useState<LiveAnswerData[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
 
   // Listen to Active Broadcast for entire room
   useEffect(() => {
     if (!event.id) return;
-    const broadcastRef = doc(db, "events", event.id, "activities", "activeBroadcast");
-    const unsubBroadcast = onSnapshot(
-      broadcastRef,
-      (docSnap) => {
-        if (docSnap.exists()) {
-          setActiveBroadcast(docSnap.data() as any);
-        } else {
-          setActiveBroadcast(null);
-        }
-      },
-      (err) => console.warn("Broadcast listener warning:", err)
-    );
+    const unsubBroadcast = BroadcastService.subscribe(event.id, (data) => {
+      setActiveBroadcast(data);
+    });
     return () => unsubBroadcast();
   }, [event.id]);
 
@@ -240,7 +232,12 @@ export function LiveRoomPanel({
   if (activeBroadcast?.activeActivity === "crossword") {
     return (
       <div className="h-full flex flex-col">
-        <CrosswordActivityView eventId={event.id} currentParticipant={currentParticipant as any} isAdmin={false} />
+        <CrosswordActivityView
+          eventId={event.id}
+          currentParticipant={currentParticipant as any}
+          isAdmin={false}
+          broadcast={activeBroadcast.crossword}
+        />
       </div>
     );
   }
@@ -248,7 +245,12 @@ export function LiveRoomPanel({
   if (activeBroadcast?.activeActivity === "riddles") {
     return (
       <div className="h-full flex flex-col">
-        <RiddleActivityView eventId={event.id} currentParticipant={currentParticipant as any} isAdmin={false} />
+        <RiddleActivityView
+          eventId={event.id}
+          currentParticipant={currentParticipant as any}
+          isAdmin={false}
+          broadcast={activeBroadcast.riddles}
+        />
       </div>
     );
   }

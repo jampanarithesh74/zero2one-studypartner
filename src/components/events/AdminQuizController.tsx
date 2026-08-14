@@ -7,12 +7,20 @@ import {
   Users, 
   Sparkles, 
   CheckCircle2, 
-  AlertCircle,
-  HelpCircle,
-  ChevronRight,
-  StopCircle,
-  Trophy,
-  Zap
+  AlertCircle, 
+  HelpCircle, 
+  ChevronRight, 
+  ChevronLeft,
+  StopCircle, 
+  Trophy, 
+  Zap,
+  Lock,
+  Eye,
+  Radio,
+  ShieldCheck, 
+  Activity,
+  Send,
+  EyeOff
 } from "lucide-react";
 import { 
   doc, 
@@ -31,11 +39,16 @@ import {
 import { db } from "../../lib/firebase";
 import { DEMO_QUIZ_QUESTIONS, QuizSessionData, QuizLeaderboardEntry } from "../../data/quizQuestions";
 import { CROSSWORD_ACTIVITIES, RIDDLE_ACTIVITIES } from "../../data/engineeringFailureData";
+import { 
+  BroadcastService, 
+  ActiveBroadcastData, 
+  CrosswordService, 
+  RiddleService 
+} from "../../services/activityService";
 import { QuizLeaderboardView } from "./QuizLeaderboardView";
 import { CrosswordActivityView } from "./CrosswordActivityView";
 import { RiddleActivityView } from "./RiddleActivityView";
 import { runMultiProjectDiagnostic, getFirebaseProjectsStatus, DiagnosticResult } from "../../lib/firebaseProjects";
-import { ShieldCheck, Activity } from "lucide-react";
 
 interface AdminQuizControllerProps {
   eventId: string;
@@ -54,7 +67,7 @@ export function AdminQuizController({
   const [loading, setLoading] = useState<boolean>(true);
   const [toastMsg, setToastMsg] = useState<string>("");
   const [timeRemaining, setTimeRemaining] = useState<number>(30);
-  const [activeBroadcast, setActiveBroadcast] = useState<{ activeActivity?: string } | null>(null);
+  const [activeBroadcast, setActiveBroadcast] = useState<ActiveBroadcastData | null>(null);
   const [showDiagModal, setShowDiagModal] = useState<boolean>(false);
   const [diagLoading, setDiagLoading] = useState<boolean>(false);
   const [diagResults, setDiagResults] = useState<DiagnosticResult[] | null>(null);
@@ -77,32 +90,170 @@ export function AdminQuizController({
   // Listen to Active Broadcast for entire room
   useEffect(() => {
     if (!eventId) return;
-    const broadcastRef = doc(db, "events", eventId, "activities", "activeBroadcast");
-    const unsubBroadcast = onSnapshot(
-      broadcastRef,
-      (docSnap) => {
-        if (docSnap.exists()) {
-          setActiveBroadcast(docSnap.data() as any);
-        } else {
-          setActiveBroadcast(null);
-        }
-      },
-      (err) => console.warn("Admin broadcast listener warning:", err)
-    );
+    const unsubBroadcast = BroadcastService.subscribe(eventId, (data) => {
+      setActiveBroadcast(data);
+    });
     return () => unsubBroadcast();
   }, [eventId]);
 
   const setLiveBroadcast = async (activity: "quiz" | "crossword" | "riddles" | "none") => {
     try {
-      const broadcastRef = doc(db, "events", eventId, "activities", "activeBroadcast");
-      await setDoc(broadcastRef, {
-        activeActivity: activity,
-        updatedAt: serverTimestamp(),
-      }, { merge: true });
-      setToastMsg(`Participants Stage set to: ${activity.toUpperCase()}`);
+      if (activity === "none") {
+        await BroadcastService.clearBroadcast(eventId);
+        setToastMsg("Participants Stage broadcast cleared");
+      } else if (activity === "crossword") {
+        await handleDisplayCrossword(0);
+      } else if (activity === "riddles") {
+        await handleStartRiddles(0);
+      } else {
+        const broadcastRef = doc(db, "events", eventId, "activities", "activeBroadcast");
+        await setDoc(broadcastRef, {
+          activeActivity: activity,
+          updatedAt: serverTimestamp(),
+        }, { merge: true });
+        setToastMsg(`Participants Stage set to: ${activity.toUpperCase()}`);
+      }
       setTimeout(() => setToastMsg(""), 3000);
     } catch (err: any) {
       console.error("Error setting broadcast:", err);
+    }
+  };
+
+  // Crossword Admin Action Controls
+  const handleDisplayCrossword = async (puzzleIdx: number) => {
+    try {
+      const puzzle = CROSSWORD_ACTIVITIES[puzzleIdx] || CROSSWORD_ACTIVITIES[0];
+      await BroadcastService.broadcastCrossword(eventId, puzzleIdx, puzzle.id, "active", false, false);
+      await CrosswordService.startSession(eventId, puzzleIdx);
+      setToastMsg(`Displaying Crossword #${puzzleIdx + 1} on participant screens & Live Wall!`);
+      setTimeout(() => setToastMsg(""), 3500);
+    } catch (err: any) {
+      console.error("Error displaying crossword:", err);
+    }
+  };
+
+  const handleToggleCrosswordFreeze = async () => {
+    const isCurrentlyFrozen = activeBroadcast?.crossword?.isFrozen || activeBroadcast?.crossword?.stage === "frozen";
+    const newFrozen = !isCurrentlyFrozen;
+    await BroadcastService.updateCrosswordState(eventId, {
+      isFrozen: newFrozen,
+      stage: newFrozen ? "frozen" : "active",
+    });
+    setToastMsg(newFrozen ? "Crossword answers frozen for all participants" : "Crossword inputs unlocked");
+    setTimeout(() => setToastMsg(""), 3000);
+  };
+
+  const handleRevealCrosswordAnswer = async () => {
+    const isRevealed = activeBroadcast?.crossword?.isRevealed || activeBroadcast?.crossword?.stage === "reveal";
+    if (isRevealed) {
+      await BroadcastService.updateCrosswordState(eventId, {
+        isRevealed: false,
+        stage: "active",
+      });
+      setToastMsg("Crossword solutions hidden");
+    } else {
+      await BroadcastService.updateCrosswordState(eventId, {
+        isRevealed: true,
+        stage: "reveal",
+      });
+      setToastMsg("Crossword solutions revealed on Stage & Live Wall!");
+    }
+    setTimeout(() => setToastMsg(""), 3000);
+  };
+
+  const handleShowCrosswordLeaderboard = async () => {
+    const isLeaderboard = activeBroadcast?.crossword?.stage === "leaderboard";
+    if (isLeaderboard) {
+      await BroadcastService.updateCrosswordState(eventId, {
+        stage: "active",
+      });
+      setToastMsg("Resumed crossword puzzle view");
+    } else {
+      await BroadcastService.updateCrosswordState(eventId, {
+        stage: "leaderboard",
+      });
+      setToastMsg("Crossword Leaderboard displayed on Stage & Live Wall!");
+    }
+    setTimeout(() => setToastMsg(""), 3000);
+  };
+
+  // Riddle Admin Action Controls
+  const handleStartRiddles = async (riddleIdx: number = 0) => {
+    try {
+      const riddle = RIDDLE_ACTIVITIES[riddleIdx] || RIDDLE_ACTIVITIES[0];
+      await BroadcastService.broadcastRiddle(eventId, riddleIdx, riddle.id, "active", false, false);
+      await RiddleService.startSession(eventId, riddleIdx);
+      setToastMsg(`Broadcasting Riddle Question ${riddleIdx + 1} of ${RIDDLE_ACTIVITIES.length} live!`);
+      setTimeout(() => setToastMsg(""), 3500);
+    } catch (err: any) {
+      console.error("Error starting riddles:", err);
+    }
+  };
+
+  const handleToggleRiddleFreeze = async () => {
+    const isCurrentlyFrozen = activeBroadcast?.riddles?.isFrozen || activeBroadcast?.riddles?.stage === "frozen";
+    const newFrozen = !isCurrentlyFrozen;
+    await BroadcastService.updateRiddleState(eventId, {
+      isFrozen: newFrozen,
+      stage: newFrozen ? "frozen" : "active",
+    });
+    setToastMsg(newFrozen ? "Riddle answers frozen for all participants" : "Riddle inputs unlocked");
+    setTimeout(() => setToastMsg(""), 3000);
+  };
+
+  const handleRevealRiddleAnswer = async () => {
+    const isRevealed = activeBroadcast?.riddles?.isRevealed || activeBroadcast?.riddles?.stage === "reveal";
+    if (isRevealed) {
+      await BroadcastService.updateRiddleState(eventId, {
+        isRevealed: false,
+        stage: "active",
+      });
+      setToastMsg("Riddle answer hidden");
+    } else {
+      await BroadcastService.updateRiddleState(eventId, {
+        isRevealed: true,
+        stage: "reveal",
+      });
+      setToastMsg("Riddle answer & explanation revealed on Stage & Live Wall!");
+    }
+    setTimeout(() => setToastMsg(""), 3000);
+  };
+
+  const handleShowRiddleLeaderboard = async () => {
+    const isLeaderboard = activeBroadcast?.riddles?.stage === "leaderboard";
+    if (isLeaderboard) {
+      await BroadcastService.updateRiddleState(eventId, {
+        stage: "active",
+      });
+      setToastMsg("Resumed riddle question view");
+    } else {
+      await BroadcastService.updateRiddleState(eventId, {
+        stage: "leaderboard",
+      });
+      setToastMsg("Riddle Leaderboard displayed on Stage & Live Wall!");
+    }
+    setTimeout(() => setToastMsg(""), 3000);
+  };
+
+  const handleNextRiddleQuestion = async () => {
+    const currentIdx = activeBroadcast?.riddles?.riddleIndex ?? 0;
+    if (currentIdx < RIDDLE_ACTIVITIES.length - 1) {
+      const nextIdx = currentIdx + 1;
+      const nextRiddle = RIDDLE_ACTIVITIES[nextIdx];
+      await BroadcastService.broadcastRiddle(eventId, nextIdx, nextRiddle.id, "active", false, false);
+      setToastMsg(`Moved to Riddle Question ${nextIdx + 1} of ${RIDDLE_ACTIVITIES.length}`);
+      setTimeout(() => setToastMsg(""), 3000);
+    }
+  };
+
+  const handlePrevRiddleQuestion = async () => {
+    const currentIdx = activeBroadcast?.riddles?.riddleIndex ?? 0;
+    if (currentIdx > 0) {
+      const prevIdx = currentIdx - 1;
+      const prevRiddle = RIDDLE_ACTIVITIES[prevIdx];
+      await BroadcastService.broadcastRiddle(eventId, prevIdx, prevRiddle.id, "active", false, false);
+      setToastMsg(`Moved back to Riddle Question ${prevIdx + 1} of ${RIDDLE_ACTIVITIES.length}`);
+      setTimeout(() => setToastMsg(""), 3000);
     }
   };
 
@@ -113,353 +264,255 @@ export function AdminQuizController({
     setLoading(true);
     const sessionRef = doc(db, "events", eventId, "activities", "quiz", "session", "current");
 
-    const unsubSession = onSnapshot(
+    const unsub = onSnapshot(
       sessionRef,
       (docSnap) => {
         if (docSnap.exists()) {
-          const data = docSnap.data() as QuizSessionData;
-          setSession(data);
-          if (data.status === "running") {
-            setSelectedActivity("quiz");
-          }
+          setSession(docSnap.data() as QuizSessionData);
         } else {
           setSession(null);
         }
         setLoading(false);
       },
-      (error) => {
-        console.warn("Quiz session listener error:", error);
+      (err) => {
+        console.error("Error listening to quiz session:", err);
         setLoading(false);
       }
     );
 
-    return () => unsubSession();
+    return () => unsub();
   }, [eventId]);
 
-  // 2. Listen to Leaderboard (Top 10)
+  // 2. Listen to Quiz Leaderboard
   useEffect(() => {
     if (!eventId) return;
 
-    const leaderboardRef = collection(db, "events", eventId, "activities", "quiz", "leaderboard");
-    const qLb = query(leaderboardRef, orderBy("currentScore", "desc"), limit(10));
+    const lbRef = collection(db, "events", eventId, "activities", "quiz", "leaderboard");
+    const q = query(lbRef, orderBy("currentScore", "desc"), limit(20));
 
-    const unsubLeaderboard = onSnapshot(
-      qLb,
-      (snapshot) => {
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
         const list: QuizLeaderboardEntry[] = [];
-        snapshot.forEach((docSnap) => {
-          list.push(docSnap.data() as QuizLeaderboardEntry);
-        });
+        snap.forEach((d) => list.push(d.data() as QuizLeaderboardEntry));
         setLeaderboard(list);
       },
-      (error) => {
-        console.warn("Leaderboard listener error:", error);
-      }
+      (err) => console.error("Error listening to leaderboard:", err)
     );
 
-    return () => unsubLeaderboard();
+    return () => unsub();
   }, [eventId]);
 
-  // Reset timer zero tracker on question change
+  // 3. Quiz 30-Second Question Timer Clock
   useEffect(() => {
-    processedTimerZeroRef.current = false;
-  }, [session?.currentQuestionIndex]);
-
-  // 4. Timer Countdown & Auto Transition to Answer Reveal
-  useEffect(() => {
-    if (!session || session.status !== "running" || session.stage !== "question" || !session.questionStartTime) return;
+    if (!session || session.status !== "running" || session.stage !== "question") {
+      return;
+    }
 
     const interval = setInterval(() => {
-      const elapsed = Math.floor((Date.now() - session.questionStartTime) / 1000);
-      const remaining = Math.max(0, (session.timerDuration || 30) - elapsed);
+      const now = Date.now();
+      const expiresAt = session.expiresAt || (session.questionStartedAt ? session.questionStartedAt + 30000 : now + 30000);
+      const remaining = Math.max(0, Math.ceil((expiresAt - now) / 1000));
       setTimeRemaining(remaining);
 
       if (remaining === 0 && !processedTimerZeroRef.current) {
         processedTimerZeroRef.current = true;
         handleQuestionTimeExpired();
       }
-    }, 500);
+    }, 250);
 
     return () => clearInterval(interval);
-  }, [session?.questionStartTime, session?.timerDuration, session?.status, session?.stage]);
+  }, [session]);
 
-  // 5. Answer Reveal 5-second Auto Timer -> Leaderboard
-  useEffect(() => {
-    if (session?.status === "running" && session.stage === "answer_reveal") {
-      if (answerRevealTimerRef.current) clearTimeout(answerRevealTimerRef.current);
-
-      answerRevealTimerRef.current = setTimeout(() => {
-        transitionToLeaderboard();
-      }, 5000);
-    }
-
-    return () => {
-      if (answerRevealTimerRef.current) clearTimeout(answerRevealTimerRef.current);
-    };
-  }, [session?.stage, session?.status]);
-
-  const showToast = (msg: string) => {
-    setToastMsg(msg);
-    setTimeout(() => setToastMsg(""), 3000);
-  };
-
-  // Process Scoring & Transition to Answer Reveal
   const handleQuestionTimeExpired = async () => {
     if (!session || !eventId) return;
-
-    const currentQIndex = session.currentQuestionIndex;
-    const currentQ = DEMO_QUIZ_QUESTIONS[currentQIndex];
-    if (!currentQ) return;
-
     try {
-      // 1. Fetch all participant responses for this question
-      const responsesRef = collection(db, "events", eventId, "activities", "quiz", "responses");
-      const respSnap = await getDocs(responsesRef);
-
-      const qKey = `question${currentQIndex}`;
-      let fastestResponder: {
-        participantId: string;
-        participantName: string;
-        responseTimeSec: number;
-        speedBonus: number;
-      } | null = null;
-
-      let fastestTime = 999;
-
-      // Collect all leaderboard updates
-      const updates: { ref: ReturnType<typeof doc>; data: QuizLeaderboardEntry }[] = [];
-
-      respSnap.forEach((docSnap) => {
-        const data = docSnap.data();
-        const pId = docSnap.id;
-        const pName = data.participantName || "Participant";
-        const selectedOpt = data[qKey];
-        const submittedAt = data[`${qKey}_submittedAt`] || session.questionStartTime + 30000;
-
-        const isCorrect = selectedOpt === currentQ.correctOptionIndex;
-        const elapsedSec = Math.max(0, Math.min(30, (submittedAt - session.questionStartTime) / 1000));
-        const remainingSec = Math.max(0, 30 - elapsedSec);
-        const speedBonus = isCorrect ? Math.round(remainingSec) : 0;
-        const questionPoints = isCorrect ? 100 + speedBonus : 0;
-
-        if (isCorrect && elapsedSec < fastestTime) {
-          fastestTime = elapsedSec;
-          fastestResponder = {
-            participantId: pId,
-            participantName: pName,
-            responseTimeSec: Math.round(elapsedSec * 10) / 10,
-            speedBonus,
-          };
-        }
-
-        // Prepare leaderboard entry in Firestore
-        const lbDocRef = doc(db, "events", eventId, "activities", "quiz", "leaderboard", pId);
-        const existingEntry = leaderboard.find((e) => e.participantId === pId);
-        const oldScore = existingEntry ? existingEntry.currentScore : 0;
-        const oldAnsCount = existingEntry ? existingEntry.questionsAnswered : 0;
-        const oldCorrectCount = existingEntry ? existingEntry.correctAnswers : 0;
-
-        const updatedEntry: QuizLeaderboardEntry = {
-          participantId: pId,
-          name: pName,
-          photo: data.photo || "",
-          currentScore: oldScore + questionPoints,
-          questionsAnswered: oldAnsCount + 1,
-          correctAnswers: oldCorrectCount + (isCorrect ? 1 : 0),
-          lastAnswerTime: Date.now(),
-        };
-
-        updates.push({ ref: lbDocRef, data: updatedEntry });
-      });
-
-      // 2. Chunk updates into batches of max 400 operations to satisfy Firestore limits securely
-      const BATCH_SIZE = 400;
-      for (let i = 0; i < updates.length; i += BATCH_SIZE) {
-        const chunk = updates.slice(i, i + BATCH_SIZE);
-        const batch = writeBatch(db);
-        chunk.forEach((item) => {
-          batch.set(item.ref, item.data, { merge: true });
-        });
-        await batch.commit();
-      }
-
-      // 3. Update session stage to "answer_reveal" ONLY after all scoring batches succeed
       const sessionRef = doc(db, "events", eventId, "activities", "quiz", "session", "current");
       await updateDoc(sessionRef, {
         stage: "answer_reveal",
-        fastestResponse: fastestResponder,
+        updatedAt: serverTimestamp(),
       });
+      setToastMsg("Time expired! Answer revealed.");
+      setTimeout(() => setToastMsg(""), 3000);
     } catch (err: any) {
-      console.error("Error processing scoring:", err);
-      showToast("Scoring failed. Please retry.");
+      console.error("Error updating quiz stage to reveal:", err);
     }
   };
 
-  // Transition to Leaderboard stage
+  const handleStartQuiz = async () => {
+    if (!eventId) return;
+    try {
+      processedTimerZeroRef.current = false;
+      const initialQ = DEMO_QUIZ_QUESTIONS[0];
+      const now = Date.now();
+
+      const sessionRef = doc(db, "events", eventId, "activities", "quiz", "session", "current");
+      await setDoc(sessionRef, {
+        eventId,
+        status: "running",
+        stage: "question",
+        currentQuestionIndex: 0,
+        currentQuestion: initialQ,
+        questionStartedAt: now,
+        expiresAt: now + 30000,
+        totalQuestions: DEMO_QUIZ_QUESTIONS.length,
+        updatedAt: serverTimestamp(),
+        createdAt: serverTimestamp(),
+      });
+
+      const broadcastRef = doc(db, "events", eventId, "activities", "activeBroadcast");
+      await setDoc(broadcastRef, {
+        activeActivity: "quiz",
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+
+      setToastMsg("Quiz started! Question 1 is live on stage.");
+      setTimeout(() => setToastMsg(""), 3000);
+    } catch (err: any) {
+      console.error("Error starting quiz:", err);
+    }
+  };
+
   const transitionToLeaderboard = async () => {
     if (!eventId) return;
     try {
       const sessionRef = doc(db, "events", eventId, "activities", "quiz", "session", "current");
       await updateDoc(sessionRef, {
         stage: "leaderboard",
+        updatedAt: serverTimestamp(),
       });
     } catch (err: any) {
       console.error("Error transitioning to leaderboard:", err);
     }
   };
 
-  // Start Quiz Session
-  const handleStartQuiz = async () => {
-    try {
-      // Clear old leaderboard and responses
-      const respRef = collection(db, "events", eventId, "activities", "quiz", "responses");
-      const respDocs = await getDocs(respRef);
-      const deleteRespPromises = respDocs.docs.map((d) => deleteDoc(d.ref));
-
-      const lbRef = collection(db, "events", eventId, "activities", "quiz", "leaderboard");
-      const lbDocs = await getDocs(lbRef);
-      const deleteLbPromises = lbDocs.docs.map((d) => deleteDoc(d.ref));
-
-      await Promise.all([...deleteRespPromises, ...deleteLbPromises]);
-
-      const sessionRef = doc(db, "events", eventId, "activities", "quiz", "session", "current");
-      const initialSession: QuizSessionData = {
-        status: "running",
-        stage: "question",
-        currentQuestionIndex: 0,
-        currentQuestion: DEMO_QUIZ_QUESTIONS[0],
-        startedAt: Date.now(),
-        questionStartTime: Date.now(),
-        timerDuration: 30,
-        isRunning: true,
-        fastestResponse: null,
-      };
-
-      await setDoc(sessionRef, initialSession);
-      setSelectedActivity("quiz");
-    } catch (err: any) {
-      console.error("Error starting quiz:", err);
-      showToast("Failed to start quiz: " + err.message);
-    }
-  };
-
-  // Advance to Next Question
   const handleNextQuestion = async () => {
-    if (!session) return;
-    const nextIdx = session.currentQuestionIndex + 1;
-
+    if (!session || !eventId) return;
     try {
-      const sessionRef = doc(db, "events", eventId, "activities", "quiz", "session", "current");
+      processedTimerZeroRef.current = false;
+      const nextIdx = session.currentQuestionIndex + 1;
 
       if (nextIdx >= DEMO_QUIZ_QUESTIONS.length) {
-        // Quiz completed
+        const sessionRef = doc(db, "events", eventId, "activities", "quiz", "session", "current");
         await updateDoc(sessionRef, {
+          status: "ended",
           stage: "completed",
-          isRunning: false,
+          updatedAt: serverTimestamp(),
         });
-        showToast("Quiz completed! Showing final standings.");
+        setToastMsg("Quiz completed! Showing final standings.");
+        setTimeout(() => setToastMsg(""), 3000);
       } else {
+        const nextQ = DEMO_QUIZ_QUESTIONS[nextIdx];
+        const now = Date.now();
+        const sessionRef = doc(db, "events", eventId, "activities", "quiz", "session", "current");
         await updateDoc(sessionRef, {
           stage: "question",
           currentQuestionIndex: nextIdx,
-          currentQuestion: DEMO_QUIZ_QUESTIONS[nextIdx],
-          questionStartTime: Date.now(),
-          isRunning: true,
+          currentQuestion: nextQ,
+          questionStartedAt: now,
+          expiresAt: now + 30000,
           fastestResponse: null,
+          updatedAt: serverTimestamp(),
         });
+        setToastMsg(`Question ${nextIdx + 1} is now live!`);
+        setTimeout(() => setToastMsg(""), 3000);
       }
     } catch (err: any) {
       console.error("Error advancing question:", err);
-      showToast("Failed to advance question: " + err.message);
     }
   };
 
-  // End Quiz (Returns participants back to normal room)
   const handleEndQuiz = async () => {
+    if (!eventId) return;
     try {
       const sessionRef = doc(db, "events", eventId, "activities", "quiz", "session", "current");
       await updateDoc(sessionRef, {
         status: "ended",
         stage: "completed",
-        isRunning: false,
+        updatedAt: serverTimestamp(),
       });
-      showToast("Quiz ended. Participants returned to main room.");
+      setToastMsg("Quiz session ended.");
+      setTimeout(() => setToastMsg(""), 3000);
     } catch (err: any) {
       console.error("Error ending quiz:", err);
-      showToast("Failed to end quiz");
     }
   };
 
-  const currentQ = session?.currentQuestion;
+  const currentQ = session?.currentQuestion || DEMO_QUIZ_QUESTIONS[session?.currentQuestionIndex || 0];
 
   return (
-    <div className="flex flex-col h-full bg-[#121212] border border-neutral-800/90 rounded-2xl overflow-hidden shadow-xl text-left font-sans relative">
-      {/* Toast Overlay */}
-      <AnimatePresence>
-        {toastMsg && (
-          <motion.div
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            className="absolute top-3 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-xl bg-orange-500 text-white font-mono text-xs font-bold shadow-2xl border border-orange-400"
-          >
-            {toastMsg}
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Header */}
-      <div className="p-3.5 border-b border-neutral-800 bg-neutral-900/90 flex items-center justify-between gap-2 shrink-0">
-        <div className="flex items-center gap-2">
-          <span className="text-base">🧠</span>
-          <h2 className="text-xs font-black uppercase tracking-wider text-white">
-            Activities Controller
-          </h2>
+    <div className="flex flex-col h-full bg-[#121212] border border-neutral-800 rounded-2xl overflow-hidden shadow-2xl text-left font-sans">
+      {/* Header Bar */}
+      <div className="p-4 border-b border-neutral-800 bg-neutral-900/90 flex flex-wrap items-center justify-between gap-3 shrink-0">
+        <div className="flex items-center gap-3">
+          <span className="text-xl">🎛️</span>
+          <div>
+            <h2 className="text-sm font-black uppercase tracking-wider text-white flex items-center gap-2">
+              <span>Admin Activity & Stage Orchestrator</span>
+              <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-bold bg-orange-500/10 text-orange-400 border border-orange-500/20">
+                PROD
+              </span>
+            </h2>
+            <span className="text-[11px] text-neutral-400 font-medium block">
+              Host controls for Quiz, Crossword, and Riddles
+            </span>
+          </div>
         </div>
 
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              setShowDiagModal(true);
-              if (!diagResults && !diagLoading) {
-                handleRunDiagnosticTest();
-              }
-            }}
-            className="px-2 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-mono font-bold transition-all cursor-pointer flex items-center gap-1.5 border border-neutral-700"
-            title="Verify 3-Project Firebase Routing"
-          >
-            <Activity size={12} className="text-orange-400" />
-            <span>3-Project Health</span>
-          </button>
           {onBackToControls && (
             <button
               type="button"
               onClick={onBackToControls}
-              className="px-2 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-mono font-bold transition-all cursor-pointer"
+              className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs font-bold transition-all cursor-pointer border border-neutral-700"
             >
-              ← Back to Q&A
+              ← Back to Stage
             </button>
           )}
-          <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-bold bg-orange-500/15 border border-orange-500/30 text-orange-400">
-            HOST CONTROLLER
-          </span>
+
+          <button
+            type="button"
+            onClick={() => {
+              setShowDiagModal(true);
+              handleRunDiagnosticTest();
+            }}
+            className="px-3 py-1.5 rounded-xl bg-neutral-800/90 hover:bg-neutral-700 text-orange-400 hover:text-orange-300 text-xs font-mono font-bold transition-all cursor-pointer border border-neutral-700 flex items-center gap-1.5"
+            title="Run 3-Project Firebase Verification Diagnostic"
+          >
+            <ShieldCheck size={14} className="text-orange-400" />
+            <span className="hidden sm:inline">Verify 3 Projects</span>
+          </button>
         </div>
       </div>
 
+      {/* Toast Notification */}
+      <AnimatePresence>
+        {toastMsg && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="mx-4 mt-3 p-2.5 rounded-xl bg-orange-500/15 border border-orange-500/40 text-orange-300 text-xs font-bold flex items-center gap-2 shadow-lg"
+          >
+            <Sparkles size={14} className="text-orange-400" />
+            <span>{toastMsg}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Main Container */}
-      <div className="flex-1 p-5 sm:p-6 flex flex-col space-y-5 overflow-y-auto">
+      <div className="flex-1 p-4 sm:p-5 flex flex-col space-y-4 overflow-y-auto">
         {/* Activity Selection Tabs */}
         <div>
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-[11px] font-mono font-bold text-neutral-400 uppercase tracking-wider">
-              Select Activity
+              Select Stage Activity
             </h3>
             {activeBroadcast?.activeActivity && activeBroadcast.activeActivity !== "none" && (
               <div className="flex items-center gap-2">
-                <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  Live for Participants: {activeBroadcast.activeActivity.toUpperCase()}
+                <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 rounded-full flex items-center gap-1.5">
+                  <Radio size={11} className="text-emerald-400 animate-pulse" />
+                  Live Broadcast: {activeBroadcast.activeActivity.toUpperCase()}
                 </span>
                 <button
                   type="button"
@@ -473,111 +526,349 @@ export function AdminQuizController({
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-            <div className="flex flex-col gap-1.5">
-              <button
-                type="button"
-                onClick={() => setSelectedActivity("quiz")}
-                className={`p-3 rounded-xl font-bold text-xs transition-all flex items-center justify-between cursor-pointer border ${
-                  selectedActivity === "quiz" || session?.status === "running"
-                    ? "bg-orange-500/15 border-orange-500 text-orange-400 shadow-lg shadow-orange-500/10"
-                    : "bg-neutral-900 border-neutral-800 text-neutral-300 hover:bg-neutral-850"
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <span className="text-base">🧠</span>
-                  <span>Quiz</span>
-                </div>
-                {session?.status === "running" && (
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                )}
-              </button>
-            </div>
-
-            <div className="flex flex-col gap-1.5">
-              <button
-                type="button"
-                onClick={() => setSelectedActivity("crossword")}
-                className={`p-3 rounded-xl font-bold text-xs transition-all flex items-center justify-between cursor-pointer border ${
-                  selectedActivity === "crossword"
-                    ? "bg-orange-500/15 border-orange-500 text-orange-400 shadow-lg shadow-orange-500/10"
-                    : "bg-neutral-900 border-neutral-800 text-neutral-300 hover:bg-neutral-850"
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <span className="text-base">🧩</span>
-                  <span>Crossword</span>
-                </div>
-                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-orange-400 font-bold">
-                  2 Puzzles
-                </span>
-              </button>
-              {selectedActivity === "crossword" && (
-                <button
-                  type="button"
-                  onClick={() => setLiveBroadcast("crossword")}
-                  className="py-1 px-2 rounded-lg bg-orange-500/10 border border-orange-500/30 text-orange-400 text-[10px] font-mono font-bold hover:bg-orange-500/20 cursor-pointer flex items-center justify-center gap-1"
-                >
-                  Broadcast Crosswords Live
-                </button>
+            {/* Quiz Tab */}
+            <button
+              type="button"
+              onClick={() => setSelectedActivity("quiz")}
+              className={`p-3 rounded-xl font-bold text-xs transition-all flex items-center justify-between cursor-pointer border ${
+                selectedActivity === "quiz" || session?.status === "running"
+                  ? "bg-orange-500/15 border-orange-500 text-orange-400 shadow-lg shadow-orange-500/10"
+                  : "bg-neutral-900 border-neutral-800 text-neutral-300 hover:bg-neutral-850"
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-base">🧠</span>
+                <span>1. Engineering Quiz</span>
+              </div>
+              {session?.status === "running" && (
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
               )}
-            </div>
+            </button>
 
-            <div className="flex flex-col gap-1.5">
-              <button
-                type="button"
-                onClick={() => setSelectedActivity("riddles")}
-                className={`p-3 rounded-xl font-bold text-xs transition-all flex items-center justify-between cursor-pointer border ${
-                  selectedActivity === "riddles"
-                    ? "bg-orange-500/15 border-orange-500 text-orange-400 shadow-lg shadow-orange-500/10"
-                    : "bg-neutral-900 border-neutral-800 text-neutral-300 hover:bg-neutral-850"
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <span className="text-base">❓</span>
-                  <span>Riddles</span>
-                </div>
-                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-orange-400 font-bold">
-                  5 Riddles
-                </span>
-              </button>
-              {selectedActivity === "riddles" && (
-                <button
-                  type="button"
-                  onClick={() => setLiveBroadcast("riddles")}
-                  className="py-1 px-2 rounded-lg bg-orange-500/10 border border-orange-500/30 text-orange-400 text-[10px] font-mono font-bold hover:bg-orange-500/20 cursor-pointer flex items-center justify-center gap-1"
-                >
-                  Broadcast Riddles Live
-                </button>
-              )}
-            </div>
+            {/* Crossword Tab */}
+            <button
+              type="button"
+              onClick={() => setSelectedActivity("crossword")}
+              className={`p-3 rounded-xl font-bold text-xs transition-all flex items-center justify-between cursor-pointer border ${
+                selectedActivity === "crossword"
+                  ? "bg-orange-500/15 border-orange-500 text-orange-400 shadow-lg shadow-orange-500/10"
+                  : "bg-neutral-900 border-neutral-800 text-neutral-300 hover:bg-neutral-850"
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-base">🧩</span>
+                <span>2. Crossword Puzzles</span>
+              </div>
+              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-orange-400 font-bold">
+                2 Puzzles
+              </span>
+            </button>
+
+            {/* Riddles Tab */}
+            <button
+              type="button"
+              onClick={() => setSelectedActivity("riddles")}
+              className={`p-3 rounded-xl font-bold text-xs transition-all flex items-center justify-between cursor-pointer border ${
+                selectedActivity === "riddles"
+                  ? "bg-orange-500/15 border-orange-500 text-orange-400 shadow-lg shadow-orange-500/10"
+                  : "bg-neutral-900 border-neutral-800 text-neutral-300 hover:bg-neutral-850"
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-base">❓</span>
+                <span>3. Mystery Riddles</span>
+              </div>
+              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-orange-400 font-bold">
+                5 Riddles
+              </span>
+            </button>
           </div>
         </div>
 
         {/* Dynamic Activity Area */}
         <AnimatePresence mode="wait">
           {selectedActivity === "crossword" ? (
+            /* CROSSWORD DEDICATED ADMIN CONTROL PANEL */
             <motion.div
-              key="crossword-view"
+              key="crossword-admin-panel"
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
-              className="flex-1"
+              className="flex-1 flex flex-col space-y-4"
             >
-              <CrosswordActivityView eventId={eventId} isAdmin={true} />
+              {/* PRIMARY ADMIN DISPLAY BUTTONS AS REQUESTED */}
+              <div className="p-4 rounded-2xl bg-neutral-950 border border-neutral-800 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-mono font-bold text-neutral-400 uppercase tracking-wider">
+                    Stage Broadcast Selection
+                  </span>
+                  {activeBroadcast?.activeActivity === "crossword" && (
+                    <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-bold bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                      <span>CROSSWORD #{(activeBroadcast.crossword?.puzzleIndex ?? 0) + 1} LIVE ON STAGE</span>
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => handleDisplayCrossword(0)}
+                    className={`p-3.5 rounded-xl font-bold text-xs transition-all flex items-center justify-between cursor-pointer border shadow-lg ${
+                      activeBroadcast?.activeActivity === "crossword" && activeBroadcast.crossword?.puzzleIndex === 0
+                        ? "bg-gradient-to-r from-orange-500 to-orange-600 text-white border-orange-400 ring-2 ring-orange-500/30"
+                        : "bg-neutral-900 hover:bg-neutral-850 text-neutral-200 border-neutral-800"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-base">🧩</span>
+                      <span>Display 1st Crossword Puzzle</span>
+                    </div>
+                    <span className="text-[10px] font-mono opacity-80 uppercase">
+                      {CROSSWORD_ACTIVITIES[0].title}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleDisplayCrossword(1)}
+                    className={`p-3.5 rounded-xl font-bold text-xs transition-all flex items-center justify-between cursor-pointer border shadow-lg ${
+                      activeBroadcast?.activeActivity === "crossword" && activeBroadcast.crossword?.puzzleIndex === 1
+                        ? "bg-gradient-to-r from-orange-500 to-orange-600 text-white border-orange-400 ring-2 ring-orange-500/30"
+                        : "bg-neutral-900 hover:bg-neutral-850 text-neutral-200 border-neutral-800"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-base">🧩</span>
+                      <span>Display 2nd Crossword Puzzle</span>
+                    </div>
+                    <span className="text-[10px] font-mono opacity-80 uppercase">
+                      {CROSSWORD_ACTIVITIES[1].title}
+                    </span>
+                  </button>
+                </div>
+
+                {/* Crossword Live Controls Strip */}
+                {activeBroadcast?.activeActivity === "crossword" && (
+                  <div className="pt-3 border-t border-neutral-850 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleToggleCrosswordFreeze}
+                        className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border flex items-center gap-1.5 ${
+                          activeBroadcast.crossword?.isFrozen || activeBroadcast.crossword?.stage === "frozen"
+                            ? "bg-amber-500 text-slate-950 border-amber-400"
+                            : "bg-neutral-900 hover:bg-neutral-800 text-neutral-300 border-neutral-800"
+                        }`}
+                      >
+                        <Lock size={13} />
+                        <span>
+                          {activeBroadcast.crossword?.isFrozen || activeBroadcast.crossword?.stage === "frozen"
+                            ? "Unfreeze Answers"
+                            : "Freeze Answers"}
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleRevealCrosswordAnswer}
+                        className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border flex items-center gap-1.5 ${
+                          activeBroadcast.crossword?.isRevealed || activeBroadcast.crossword?.stage === "reveal"
+                            ? "bg-emerald-500 text-slate-950 border-emerald-400"
+                            : "bg-neutral-900 hover:bg-neutral-800 text-neutral-300 border-neutral-800"
+                        }`}
+                      >
+                        <Eye size={13} />
+                        <span>
+                          {activeBroadcast.crossword?.isRevealed || activeBroadcast.crossword?.stage === "reveal"
+                            ? "Hide Answers"
+                            : "Reveal Answers"}
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleShowCrosswordLeaderboard}
+                        className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border flex items-center gap-1.5 ${
+                          activeBroadcast.crossword?.stage === "leaderboard"
+                            ? "bg-amber-500 text-slate-950 border-amber-400"
+                            : "bg-neutral-900 hover:bg-neutral-800 text-neutral-300 border-neutral-800"
+                        }`}
+                      >
+                        <Trophy size={13} />
+                        <span>
+                          {activeBroadcast.crossword?.stage === "leaderboard"
+                            ? "Resume Puzzle"
+                            : "Show Leaderboard"}
+                        </span>
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setLiveBroadcast("none")}
+                      className="px-3 py-1.5 rounded-xl bg-red-500/15 hover:bg-red-500/25 text-red-400 border border-red-500/30 text-xs font-mono font-bold transition-all cursor-pointer"
+                    >
+                      Stop Broadcast
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Host Interactive Crossword Workspace */}
+              <div className="flex-1 min-h-[500px]">
+                <CrosswordActivityView eventId={eventId} isAdmin={true} />
+              </div>
             </motion.div>
           ) : selectedActivity === "riddles" ? (
+            /* RIDDLES DEDICATED ADMIN CONTROL PANEL */
             <motion.div
-              key="riddles-view"
+              key="riddles-admin-panel"
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
-              className="flex-1"
+              className="flex-1 flex flex-col space-y-4"
             >
-              <RiddleActivityView eventId={eventId} isAdmin={true} />
+              {/* PRIMARY ADMIN RIDDLES CONTROLS AS REQUESTED */}
+              <div className="p-4 rounded-2xl bg-neutral-950 border border-neutral-800 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-mono font-bold text-neutral-400 uppercase tracking-wider">
+                    Riddle Question Stage Controls
+                  </span>
+                  {activeBroadcast?.activeActivity === "riddles" && (
+                    <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-bold bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                      <span>QUESTION {(activeBroadcast.riddles?.riddleIndex ?? 0) + 1} OF 5 LIVE</span>
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleStartRiddles(0)}
+                    className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white font-black text-xs transition-all shadow-lg flex items-center gap-1.5 cursor-pointer border border-orange-400/40"
+                  >
+                    <Play size={14} className="fill-white" />
+                    <span>Start Riddle Questions</span>
+                  </button>
+
+                  <div className="flex items-center gap-1 bg-neutral-900 p-1 rounded-xl border border-neutral-800">
+                    {RIDDLE_ACTIVITIES.map((r, idx) => (
+                      <button
+                        key={r.id}
+                        type="button"
+                        onClick={() => handleStartRiddles(idx)}
+                        className={`w-7 h-7 rounded-lg text-xs font-mono font-black transition-all cursor-pointer flex items-center justify-center ${
+                          activeBroadcast?.activeActivity === "riddles" && activeBroadcast.riddles?.riddleIndex === idx
+                            ? "bg-orange-500 text-white shadow-md"
+                            : "text-neutral-400 hover:text-white"
+                        }`}
+                        title={`Broadcast Riddle ${idx + 1}`}
+                      >
+                        {idx + 1}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Riddle Live Controls Strip */}
+                {activeBroadcast?.activeActivity === "riddles" && (
+                  <div className="pt-3 border-t border-neutral-850 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleToggleRiddleFreeze}
+                        className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border flex items-center gap-1.5 ${
+                          activeBroadcast.riddles?.isFrozen || activeBroadcast.riddles?.stage === "frozen"
+                            ? "bg-amber-500 text-slate-950 border-amber-400"
+                            : "bg-neutral-900 hover:bg-neutral-800 text-neutral-300 border-neutral-800"
+                        }`}
+                      >
+                        <Lock size={13} />
+                        <span>
+                          {activeBroadcast.riddles?.isFrozen || activeBroadcast.riddles?.stage === "frozen"
+                            ? "Unfreeze Answers"
+                            : "Freeze Answers"}
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleRevealRiddleAnswer}
+                        className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border flex items-center gap-1.5 ${
+                          activeBroadcast.riddles?.isRevealed || activeBroadcast.riddles?.stage === "reveal"
+                            ? "bg-emerald-500 text-slate-950 border-emerald-400"
+                            : "bg-neutral-900 hover:bg-neutral-800 text-neutral-300 border-neutral-800"
+                        }`}
+                      >
+                        <Eye size={13} />
+                        <span>
+                          {activeBroadcast.riddles?.isRevealed || activeBroadcast.riddles?.stage === "reveal"
+                            ? "Hide Answer"
+                            : "Reveal Answer"}
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleShowRiddleLeaderboard}
+                        className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border flex items-center gap-1.5 ${
+                          activeBroadcast.riddles?.stage === "leaderboard"
+                            ? "bg-amber-500 text-slate-950 border-amber-400"
+                            : "bg-neutral-900 hover:bg-neutral-800 text-neutral-300 border-neutral-800"
+                        }`}
+                      >
+                        <Trophy size={13} />
+                        <span>
+                          {activeBroadcast.riddles?.stage === "leaderboard"
+                            ? "Resume Riddle"
+                            : "Show Leaderboard"}
+                        </span>
+                      </button>
+
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          disabled={(activeBroadcast.riddles?.riddleIndex ?? 0) <= 0}
+                          onClick={handlePrevRiddleQuestion}
+                          className="px-2.5 py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-300 disabled:opacity-30 border border-neutral-800 text-xs font-bold transition-all cursor-pointer flex items-center gap-1"
+                        >
+                          <ChevronLeft size={13} />
+                          <span>Prev</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={(activeBroadcast.riddles?.riddleIndex ?? 0) >= RIDDLE_ACTIVITIES.length - 1}
+                          onClick={handleNextRiddleQuestion}
+                          className="px-3.5 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white disabled:opacity-30 border border-neutral-700 text-xs font-black transition-all cursor-pointer flex items-center gap-1 shadow-sm"
+                        >
+                          <span>Move to Next Question</span>
+                          <ChevronRight size={14} />
+                        </button>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setLiveBroadcast("none")}
+                      className="px-3 py-1.5 rounded-xl bg-red-500/15 hover:bg-red-500/25 text-red-400 border border-red-500/30 text-xs font-mono font-bold transition-all cursor-pointer"
+                    >
+                      Stop Broadcast
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Host Interactive Riddle Workspace */}
+              <div className="flex-1 min-h-[500px]">
+                <RiddleActivityView eventId={eventId} isAdmin={true} />
+              </div>
             </motion.div>
           ) : session?.status === "running" ? (
             session.stage === "question" ? (
-              /* ACTIVE QUESTION MONITOR */
+              /* ACTIVE QUIZ QUESTION MONITOR */
               <motion.div
                 key="running-question"
                 initial={{ opacity: 0, scale: 0.98 }}

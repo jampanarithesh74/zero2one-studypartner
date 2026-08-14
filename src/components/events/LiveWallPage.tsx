@@ -10,15 +10,30 @@ import {
   Maximize2, 
   Minimize2, 
   Flame,
-  Users
+  Users,
+  Trophy,
+  Lock,
+  CheckCircle2,
+  HelpCircle,
+  Zap,
+  Clock,
+  Eye
 } from "lucide-react";
 import { doc, collection, onSnapshot, query, where, orderBy, limit } from "firebase/firestore";
 import { db } from "../../lib/firebase";
 import { EventItem } from "../PublicEventPage";
 import { ActiveQuestionData, LiveAnswerData } from "../EventRoom/LiveRoomPanel";
 import { QuizSessionData, QuizLeaderboardEntry } from "../../data/quizQuestions";
+import { CROSSWORD_ACTIVITIES, RIDDLE_ACTIVITIES } from "../../data/engineeringFailureData";
+import { 
+  BroadcastService, 
+  ActiveBroadcastData, 
+  CrosswordLeaderboardEntry, 
+  CrosswordService, 
+  RiddleLeaderboardEntry, 
+  RiddleService 
+} from "../../services/activityService";
 import { QuizLeaderboardView } from "./QuizLeaderboardView";
-import { Zap, Clock } from "lucide-react";
 
 interface AggregatedBubble {
   key: string;
@@ -42,10 +57,13 @@ export function LiveWallPage({ isAdmin }: LiveWallPageProps) {
   const [answers, setAnswers] = useState<LiveAnswerData[]>([]);
   const [quizSession, setQuizSession] = useState<QuizSessionData | null>(null);
   const [quizLeaderboard, setQuizLeaderboard] = useState<QuizLeaderboardEntry[]>([]);
+  const [activeBroadcast, setActiveBroadcast] = useState<ActiveBroadcastData | null>(null);
+  const [crosswordLeaderboard, setCrosswordLeaderboard] = useState<CrosswordLeaderboardEntry[]>([]);
+  const [riddleLeaderboard, setRiddleLeaderboard] = useState<RiddleLeaderboardEntry[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
 
-  // Track highlighted bubble keys (for 2-second glow animation on new/updated responses)
+  // Track highlighted bubble keys
   const [highlightedKeys, setHighlightedKeys] = useState<Set<string>>(new Set());
   const prevCountsRef = useRef<Map<string, number>>(new Map());
 
@@ -92,7 +110,31 @@ export function LiveWallPage({ isAdmin }: LiveWallPageProps) {
     return () => unsubEvent();
   }, [eventId]);
 
-  // 2. Listen to Active Question
+  // 2. Listen to Active Broadcast for entire room
+  useEffect(() => {
+    if (!eventId) return;
+    const unsub = BroadcastService.subscribe(eventId, (data) => {
+      setActiveBroadcast(data);
+    });
+    return () => unsub();
+  }, [eventId]);
+
+  // 3. Listen to Crossword & Riddle Leaderboards when active
+  useEffect(() => {
+    if (!eventId) return;
+    const unsubCw = CrosswordService.subscribeLeaderboard(eventId, (lb) => {
+      setCrosswordLeaderboard(lb);
+    });
+    const unsubRd = RiddleService.subscribeLeaderboard(eventId, (lb) => {
+      setRiddleLeaderboard(lb);
+    });
+    return () => {
+      unsubCw();
+      unsubRd();
+    };
+  }, [eventId]);
+
+  // 4. Listen to Active Question (Open stage Q&A)
   useEffect(() => {
     if (!eventId) return;
 
@@ -125,7 +167,7 @@ export function LiveWallPage({ isAdmin }: LiveWallPageProps) {
 
   const currentQuestionId = activeQuestion?.questionId || "";
 
-  // 3. Listen to Live Answers (scoped to current active question)
+  // 5. Listen to Live Answers
   useEffect(() => {
     if (!eventId || !currentQuestionId) {
       setAnswers([]);
@@ -147,7 +189,7 @@ export function LiveWallPage({ isAdmin }: LiveWallPageProps) {
     return () => unsubAnswers();
   }, [eventId, currentQuestionId]);
 
-  // 4. Listen to Quiz Session
+  // 6. Listen to Quiz Session
   useEffect(() => {
     if (!eventId) return;
 
@@ -167,7 +209,7 @@ export function LiveWallPage({ isAdmin }: LiveWallPageProps) {
     return () => unsubQuizSession();
   }, [eventId]);
 
-  // 5. Listen to Quiz Leaderboard (Top 10)
+  // 7. Listen to Quiz Leaderboard
   useEffect(() => {
     if (!eventId) return;
 
@@ -192,7 +234,7 @@ export function LiveWallPage({ isAdmin }: LiveWallPageProps) {
     return answers.filter((a) => a.questionId === currentQuestionId);
   }, [answers, currentQuestionId]);
 
-  // Aggregate duplicate responses (normalized, trimmed, case-insensitive)
+  // Aggregate duplicate responses
   const aggregatedBubbles = useMemo(() => {
     const map = new Map<string, { displayText: string; count: number; latestTimestamp: number }>();
 
@@ -233,49 +275,12 @@ export function LiveWallPage({ isAdmin }: LiveWallPageProps) {
       idx++;
     });
 
-    // Sort by count descending so most popular responses anchor near center
     return result.sort((a, b) => b.count - a.count);
   }, [matchingAnswers, highlightedKeys]);
 
-  // Track changes to trigger 2-second highlight pulse on new or incremented answers
-  useEffect(() => {
-    const newHighlights = new Set<string>();
-    const currentCounts = new Map<string, number>();
-
-    aggregatedBubbles.forEach((b) => {
-      currentCounts.set(b.key, b.count);
-      const prevCount = prevCountsRef.current.get(b.key) || 0;
-
-      if (b.count > prevCount && prevCountsRef.current.size > 0) {
-        newHighlights.add(b.key);
-      }
-    });
-
-    prevCountsRef.current = currentCounts;
-
-    if (newHighlights.size > 0) {
-      setHighlightedKeys((prev) => {
-        const next = new Set(prev);
-        newHighlights.forEach((k) => next.add(k));
-        return next;
-      });
-
-      const timer = setTimeout(() => {
-        setHighlightedKeys((prev) => {
-          const next = new Set(prev);
-          newHighlights.forEach((k) => next.delete(k));
-          return next;
-        });
-      }, 2200);
-
-      return () => clearTimeout(timer);
-    }
-  }, [aggregatedBubbles]);
-
-  // Color theme presets for floating bubbles
+  // Bubble colors
   const bubbleColorStyles = [
     {
-      // Cyan Glow
       bg: "bg-gradient-to-br from-cyan-950/80 via-cyan-900/40 to-neutral-950/90",
       border: "border-cyan-500/50 hover:border-cyan-400",
       text: "text-cyan-100",
@@ -284,7 +289,6 @@ export function LiveWallPage({ isAdmin }: LiveWallPageProps) {
       highlightGlow: "shadow-[0_0_45px_rgba(6,182,212,0.85)] border-cyan-400",
     },
     {
-      // Purple Glow
       bg: "bg-gradient-to-br from-purple-950/80 via-purple-900/40 to-neutral-950/90",
       border: "border-purple-500/50 hover:border-purple-400",
       text: "text-purple-100",
@@ -293,7 +297,6 @@ export function LiveWallPage({ isAdmin }: LiveWallPageProps) {
       highlightGlow: "shadow-[0_0_45px_rgba(168,85,247,0.85)] border-purple-400",
     },
     {
-      // Orange Glow
       bg: "bg-gradient-to-br from-orange-950/80 via-orange-900/40 to-neutral-950/90",
       border: "border-orange-500/50 hover:border-orange-400",
       text: "text-orange-100",
@@ -302,7 +305,6 @@ export function LiveWallPage({ isAdmin }: LiveWallPageProps) {
       highlightGlow: "shadow-[0_0_45px_rgba(249,115,22,0.85)] border-orange-400",
     },
     {
-      // Blue Glow
       bg: "bg-gradient-to-br from-blue-950/80 via-blue-900/40 to-neutral-950/90",
       border: "border-blue-500/50 hover:border-blue-400",
       text: "text-blue-100",
@@ -312,8 +314,41 @@ export function LiveWallPage({ isAdmin }: LiveWallPageProps) {
     },
   ];
 
+  // Crossword matrix helpers for Live Wall
+  const crosswordState = activeBroadcast?.crossword;
+  const currentPuzzleIdx = crosswordState?.puzzleIndex ?? 0;
+  const currentCrossword = CROSSWORD_ACTIVITIES[currentPuzzleIdx] || CROSSWORD_ACTIVITIES[0];
+
+  const { cwMatrix, cwStartMap } = useMemo(() => {
+    const matrix: (string | null)[][] = Array.from({ length: currentCrossword.gridRows }, () =>
+      Array.from({ length: currentCrossword.gridCols }, () => null)
+    );
+    const startMap: Record<string, number> = {};
+
+    currentCrossword.clues.forEach((clue) => {
+      const startKey = `${clue.row},${clue.col}`;
+      if (!startMap[startKey]) {
+        startMap[startKey] = clue.number;
+      }
+      for (let i = 0; i < clue.answer.length; i++) {
+        const r = clue.direction === "across" ? clue.row : clue.row + i;
+        const c = clue.direction === "across" ? clue.col + i : clue.col;
+        if (r < currentCrossword.gridRows && c < currentCrossword.gridCols) {
+          matrix[r][c] = clue.answer[i].toUpperCase();
+        }
+      }
+    });
+
+    return { cwMatrix: matrix, cwStartMap: startMap };
+  }, [currentCrossword]);
+
+  // Riddle helper for Live Wall
+  const riddleState = activeBroadcast?.riddles;
+  const currentRiddleIdx = riddleState?.riddleIndex ?? 0;
+  const currentRiddle = RIDDLE_ACTIVITIES[currentRiddleIdx] || RIDDLE_ACTIVITIES[0];
+
   return (
-    <div className="min-h-screen h-screen bg-[#050508] text-white flex flex-col font-sans select-none overflow-hidden relative selection:bg-cyan-500 selection:text-black">
+    <div className="min-h-screen h-screen bg-[#050508] text-white flex flex-col font-sans select-none overflow-hidden relative selection:bg-orange-500 selection:text-black">
       {/* Ambient Conference Background Lights */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden">
         <div className="absolute top-[-10%] left-[-10%] w-[50vw] h-[50vw] bg-purple-600/10 blur-[140px] rounded-full animate-pulse" />
@@ -321,9 +356,8 @@ export function LiveWallPage({ isAdmin }: LiveWallPageProps) {
         <div className="absolute top-[40%] right-[30%] w-[35vw] h-[35vw] bg-orange-600/5 blur-[160px] rounded-full" />
       </div>
 
-      {/* Top Presentation Bar - Minimal & Clean */}
-      <header className="p-4 sm:p-6 bg-neutral-950/80 border-b border-neutral-800/80 backdrop-blur-md flex items-center justify-between gap-4 z-20 shrink-0 relative">
-        {/* Event Title & Branding */}
+      {/* Top Presentation Bar */}
+      <header className="p-4 sm:p-5 bg-neutral-950/85 border-b border-neutral-800 backdrop-blur-md flex items-center justify-between gap-4 z-20 shrink-0 relative">
         <div className="flex items-center gap-4 min-w-0">
           <button
             type="button"
@@ -340,19 +374,27 @@ export function LiveWallPage({ isAdmin }: LiveWallPageProps) {
               {event?.title || "ZERO2ONE Live Event Stage"}
             </h1>
             <p className="text-xs font-mono text-neutral-400 mt-1 flex items-center gap-2">
-              <span className="text-cyan-400 font-bold uppercase tracking-wider">
+              <span className="text-orange-400 font-bold uppercase tracking-wider">
                 {event?.college || "ZERO2ONE Stage"}
               </span>
               <span>•</span>
-              <span className="text-neutral-400">{matchingAnswers.length} Responses Submitted</span>
+              <span className="text-neutral-400">
+                {activeBroadcast?.activeActivity === "crossword"
+                  ? `Crossword #${currentPuzzleIdx + 1} (${currentCrossword.title})`
+                  : activeBroadcast?.activeActivity === "riddles"
+                  ? `Engineering Riddle ${currentRiddleIdx + 1} of 5`
+                  : quizSession?.status === "running"
+                  ? "Live Quiz Challenge"
+                  : `${matchingAnswers.length} Responses`}
+              </span>
             </p>
           </div>
         </div>
 
         {/* Header Right Stage Controls */}
         <div className="flex items-center gap-3 shrink-0">
-          <div className="px-3 py-1.5 rounded-full text-xs font-mono font-black uppercase tracking-wider bg-purple-500/15 border border-purple-500/30 text-purple-300 flex items-center gap-2">
-            <Tv size={14} className="text-purple-400" />
+          <div className="px-3 py-1.5 rounded-full text-xs font-mono font-black uppercase tracking-wider bg-orange-500/15 border border-orange-500/30 text-orange-300 flex items-center gap-2">
+            <Tv size={14} className="text-orange-400" />
             <span className="hidden sm:inline">PROJECTOR VIEW</span>
           </div>
 
@@ -374,12 +416,325 @@ export function LiveWallPage({ isAdmin }: LiveWallPageProps) {
       </header>
 
       {/* Main Presentation Stage */}
-      <main className="flex-1 flex flex-col justify-between p-4 sm:p-8 z-10 relative overflow-hidden">
-        {loading ? (
-          <div className="my-auto text-center space-y-4">
-            <div className="w-10 h-10 border-3 border-cyan-500 border-t-transparent rounded-full animate-spin mx-auto" />
-            <p className="text-sm font-mono text-neutral-400">Syncing Stage Presentation...</p>
-          </div>
+      <main className="flex-1 flex flex-col justify-between p-4 sm:p-6 z-10 relative overflow-hidden">
+        {activeBroadcast?.activeActivity === "crossword" ? (
+          /* CROSSWORD LIVE STAGE PRESENTATION */
+          <AnimatePresence mode="wait">
+            {crosswordState?.stage === "leaderboard" ? (
+              <motion.div
+                key="cw-leaderboard"
+                initial={{ opacity: 0, scale: 0.96 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.96 }}
+                className="max-w-4xl mx-auto w-full my-auto space-y-6"
+              >
+                <div className="text-center space-y-2">
+                  <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-mono font-black uppercase tracking-widest text-amber-400 bg-amber-500/15 border border-amber-500/30">
+                    <Trophy size={14} className="text-amber-400" />
+                    <span>CROSSWORD #{currentPuzzleIdx + 1} • LEADERBOARD</span>
+                  </div>
+                  <h2 className="text-3xl sm:text-5xl font-black text-white tracking-tight">
+                    Crossword Champions Standings
+                  </h2>
+                </div>
+
+                <div className="p-6 rounded-3xl bg-neutral-950/90 border border-neutral-800 shadow-2xl space-y-3 max-h-[60vh] overflow-y-auto">
+                  {crosswordLeaderboard.length === 0 ? (
+                    <div className="p-8 text-center text-sm font-mono text-neutral-500">
+                      No crossword scores recorded yet.
+                    </div>
+                  ) : (
+                    crosswordLeaderboard.map((entry, idx) => (
+                      <div
+                        key={entry.participantId}
+                        className={`p-4 rounded-2xl border flex items-center justify-between font-mono ${
+                          idx === 0
+                            ? "bg-amber-500/20 border-amber-500/50 text-white shadow-lg"
+                            : "bg-neutral-900 border-neutral-800 text-neutral-300"
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className="w-8 h-8 rounded-xl bg-neutral-800 text-orange-400 font-black flex items-center justify-center text-sm">
+                            #{idx + 1}
+                          </span>
+                          <span className="text-base font-black text-white">{entry.name}</span>
+                        </div>
+                        <div className="flex items-center gap-4 text-sm">
+                          <span className="text-neutral-400">{entry.puzzlesCompleted} solved</span>
+                          <span className="text-orange-400 font-black text-base">{entry.currentScore} pts</span>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </motion.div>
+            ) : (
+              <motion.div
+                key={`cw-grid-${currentPuzzleIdx}`}
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -15 }}
+                className="flex-1 flex flex-col justify-between h-full max-w-7xl mx-auto w-full gap-4"
+              >
+                {/* Crossword Header */}
+                <div className="flex items-center justify-between shrink-0">
+                  <div className="flex items-center gap-3">
+                    <span className="px-3.5 py-1.5 rounded-full text-xs font-mono font-black text-orange-400 bg-orange-500/15 border border-orange-500/30 uppercase tracking-wider">
+                      CROSSWORD #{currentPuzzleIdx + 1}
+                    </span>
+                    <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight">
+                      {currentCrossword.title}
+                    </h2>
+                  </div>
+
+                  <div className="flex items-center gap-2 font-mono text-xs">
+                    {crosswordState?.isRevealed || crosswordState?.stage === "reveal" ? (
+                      <span className="px-3 py-1 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-bold flex items-center gap-1.5">
+                        <Eye size={14} className="text-emerald-400" />
+                        <span>SOLUTIONS REVEALED</span>
+                      </span>
+                    ) : crosswordState?.isFrozen || crosswordState?.stage === "frozen" ? (
+                      <span className="px-3 py-1 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-300 font-bold flex items-center gap-1.5">
+                        <Lock size={14} className="text-amber-400" />
+                        <span>SUBMISSIONS LOCKED</span>
+                      </span>
+                    ) : (
+                      <span className="px-3 py-1 rounded-lg bg-orange-500/20 border border-orange-500/40 text-orange-300 font-bold flex items-center gap-1.5">
+                        <Radio size={14} className="text-orange-400 animate-pulse" />
+                        <span>PUZZLE ACTIVE</span>
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* 2-Column Split: Left = 6 Across & 6 Down Clues, Right = Crossword Grid */}
+                <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch min-h-0">
+                  {/* Left Column: 6 Across and 6 Down Clues */}
+                  <div className="lg:col-span-5 flex flex-col gap-3 overflow-y-auto pr-1">
+                    {/* 6 Across Clues */}
+                    <div className="p-4 rounded-2xl bg-neutral-950/90 border border-neutral-800 space-y-2">
+                      <h3 className="text-xs font-black font-mono text-orange-400 uppercase tracking-wider flex items-center gap-1.5">
+                        <span>➡ 6 ACROSS CLUES</span>
+                      </h3>
+                      <div className="space-y-2">
+                        {currentCrossword.clues
+                          .filter((c) => c.direction === "across")
+                          .map((clue) => (
+                            <div
+                              key={clue.number}
+                              className="p-2.5 rounded-xl bg-neutral-900 border border-neutral-800/90 text-xs leading-snug"
+                            >
+                              <span className="font-mono font-black text-orange-400 mr-2">
+                                {clue.number}.
+                              </span>
+                              <span className="text-neutral-100 font-medium">{clue.clue}</span>
+                              {(crosswordState?.isRevealed || crosswordState?.stage === "reveal") && (
+                                <span className="ml-2 font-mono font-black text-emerald-400 uppercase">
+                                  [{clue.answer}]
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+
+                    {/* 6 Down Clues */}
+                    <div className="p-4 rounded-2xl bg-neutral-950/90 border border-neutral-800 space-y-2">
+                      <h3 className="text-xs font-black font-mono text-orange-400 uppercase tracking-wider flex items-center gap-1.5">
+                        <span>⬇ 6 DOWN CLUES</span>
+                      </h3>
+                      <div className="space-y-2">
+                        {currentCrossword.clues
+                          .filter((c) => c.direction === "down")
+                          .map((clue) => (
+                            <div
+                              key={clue.number}
+                              className="p-2.5 rounded-xl bg-neutral-900 border border-neutral-800/90 text-xs leading-snug"
+                            >
+                              <span className="font-mono font-black text-orange-400 mr-2">
+                                {clue.number}.
+                              </span>
+                              <span className="text-neutral-100 font-medium">{clue.clue}</span>
+                              {(crosswordState?.isRevealed || crosswordState?.stage === "reveal") && (
+                                <span className="ml-2 font-mono font-black text-emerald-400 uppercase">
+                                  [{clue.answer}]
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right Column: Crossword Grid (Empty or Revealed) */}
+                  <div className="lg:col-span-7 flex flex-col items-center justify-center p-6 rounded-3xl bg-neutral-950/95 border border-neutral-800 shadow-2xl overflow-auto">
+                    <div
+                      className="grid gap-1.5 select-none"
+                      style={{
+                        gridTemplateColumns: `repeat(${currentCrossword.gridCols}, minmax(36px, 48px))`,
+                        gridTemplateRows: `repeat(${currentCrossword.gridRows}, minmax(36px, 48px))`,
+                      }}
+                    >
+                      {Array.from({ length: currentCrossword.gridRows }).map((_, r) =>
+                        Array.from({ length: currentCrossword.gridCols }).map((_, c) => {
+                          const correctChar = cwMatrix[r][c];
+                          const isBlocked = correctChar === null;
+                          const cellKey = `${r},${c}`;
+                          const clueNum = cwStartMap[cellKey];
+                          const isRevealed =
+                            crosswordState?.isRevealed || crosswordState?.stage === "reveal";
+
+                          if (isBlocked) {
+                            return (
+                              <div
+                                key={`${r}-${c}`}
+                                className="w-full h-full bg-[#0a0a0c] rounded-lg border border-neutral-900"
+                              />
+                            );
+                          }
+
+                          return (
+                            <div
+                              key={`${r}-${c}`}
+                              className={`relative w-full h-full rounded-lg font-mono font-black text-lg sm:text-xl flex items-center justify-center border shadow-md transition-all ${
+                                isRevealed
+                                  ? "bg-emerald-500/20 border-emerald-500/60 text-emerald-300 ring-1 ring-emerald-500/30"
+                                  : "bg-neutral-900 border-neutral-700 text-white"
+                              }`}
+                            >
+                              {clueNum && (
+                                <span className="absolute top-0.5 left-1 text-[9px] font-mono leading-none text-neutral-400 font-bold">
+                                  {clueNum}
+                                </span>
+                              )}
+                              <span className="uppercase">{isRevealed ? correctChar : ""}</span>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        ) : activeBroadcast?.activeActivity === "riddles" ? (
+          /* RIDDLES LIVE STAGE PRESENTATION */
+          <AnimatePresence mode="wait">
+            {riddleState?.stage === "leaderboard" ? (
+              <motion.div
+                key="riddle-leaderboard"
+                initial={{ opacity: 0, scale: 0.96 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.96 }}
+                className="max-w-4xl mx-auto w-full my-auto space-y-6"
+              >
+                <div className="text-center space-y-2">
+                  <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-mono font-black uppercase tracking-widest text-amber-400 bg-amber-500/15 border border-amber-500/30">
+                    <Trophy size={14} className="text-amber-400" />
+                    <span>RIDDLE CHALLENGE • LEADERBOARD</span>
+                  </div>
+                  <h2 className="text-3xl sm:text-5xl font-black text-white tracking-tight">
+                    Riddle Master Standings
+                  </h2>
+                </div>
+
+                <div className="p-6 rounded-3xl bg-neutral-950/90 border border-neutral-800 shadow-2xl space-y-3 max-h-[60vh] overflow-y-auto">
+                  {riddleLeaderboard.length === 0 ? (
+                    <div className="p-8 text-center text-sm font-mono text-neutral-500">
+                      No riddle scores recorded yet.
+                    </div>
+                  ) : (
+                    riddleLeaderboard.map((entry, idx) => (
+                      <div
+                        key={entry.participantId}
+                        className={`p-4 rounded-2xl border flex items-center justify-between font-mono ${
+                          idx === 0
+                            ? "bg-amber-500/20 border-amber-500/50 text-white shadow-lg"
+                            : "bg-neutral-900 border-neutral-800 text-neutral-300"
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className="w-8 h-8 rounded-xl bg-neutral-800 text-orange-400 font-black flex items-center justify-center text-sm">
+                            #{idx + 1}
+                          </span>
+                          <span className="text-base font-black text-white">{entry.name}</span>
+                        </div>
+                        <div className="flex items-center gap-4 text-sm">
+                          <span className="text-neutral-400">{entry.riddlesSolved} solved</span>
+                          <span className="text-orange-400 font-black text-base">{entry.currentScore} pts</span>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </motion.div>
+            ) : (
+              <motion.div
+                key={`riddle-question-${currentRiddleIdx}`}
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -15 }}
+                className="max-w-4xl mx-auto w-full my-auto space-y-8 text-center"
+              >
+                <div className="space-y-3">
+                  <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-mono font-black uppercase tracking-widest text-orange-400 bg-orange-500/15 border border-orange-500/30">
+                    <Sparkles size={14} className="text-orange-400" />
+                    <span>RIDDLE QUESTION {currentRiddleIdx + 1} OF 5</span>
+                  </div>
+
+                  <h2 className="text-2xl sm:text-4xl md:text-5xl font-black text-white tracking-tight leading-relaxed italic px-4">
+                    "{currentRiddle.riddleText}"
+                  </h2>
+                </div>
+
+                {/* Empty or Revealed Letter Boxes on Live Wall */}
+                <div className="space-y-4">
+                  <span className="text-xs font-mono font-bold text-neutral-400 uppercase tracking-widest block">
+                    {riddleState?.isRevealed || riddleState?.stage === "reveal"
+                      ? "Revealed Solution"
+                      : `Answer: ${currentRiddle.answer.length} Letters`}
+                  </span>
+
+                  <div className="flex items-center justify-center gap-3 sm:gap-4 flex-wrap">
+                    {Array.from({ length: currentRiddle.answer.length }).map((_, idx) => {
+                      const isRevealed =
+                        riddleState?.isRevealed || riddleState?.stage === "reveal";
+                      const letter = isRevealed ? currentRiddle.answer[idx] : "";
+                      return (
+                        <div
+                          key={idx}
+                          className={`w-14 h-16 sm:w-16 sm:h-20 rounded-2xl border-2 flex items-center justify-center font-mono font-black text-2xl sm:text-3xl uppercase shadow-2xl transition-all ${
+                            isRevealed
+                              ? "bg-emerald-500/20 border-emerald-500 text-emerald-300 ring-2 ring-emerald-500/40"
+                              : "bg-neutral-900/90 border-neutral-700 text-transparent"
+                          }`}
+                        >
+                          {letter}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Technical Explanation when Revealed */}
+                {(riddleState?.isRevealed || riddleState?.stage === "reveal") && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="p-6 rounded-2xl bg-neutral-950/90 border border-orange-500/40 text-left max-w-3xl mx-auto space-y-2 shadow-2xl"
+                  >
+                    <span className="text-xs font-mono font-black text-orange-400 uppercase tracking-widest block">
+                      Engineering Breakdown
+                    </span>
+                    <p className="text-sm sm:text-base text-neutral-200 leading-relaxed">
+                      {currentRiddle.explanation}
+                    </p>
+                  </motion.div>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
         ) : quizSession && quizSession.status === "running" ? (
           /* LIVE QUIZ STAGE PRESENTATION */
           <AnimatePresence mode="wait">
@@ -455,7 +810,6 @@ export function LiveWallPage({ isAdmin }: LiveWallPageProps) {
                 />
               </motion.div>
             ) : (
-              /* QUESTION STAGE */
               <motion.div
                 key={`quiz-question-${quizSession.currentQuestionIndex}`}
                 initial={{ opacity: 0, y: 15 }}
@@ -500,7 +854,6 @@ export function LiveWallPage({ isAdmin }: LiveWallPageProps) {
               transition={{ duration: 0.4 }}
               className="flex-1 flex flex-col justify-between h-full"
             >
-              {/* STAGE ACTIVE QUESTION BANNER */}
               <div className="max-w-4xl mx-auto w-full text-center space-y-3 pt-2 sm:pt-4 shrink-0">
                 <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full text-xs font-mono font-black uppercase tracking-widest text-orange-400 bg-orange-500/15 border border-orange-500/30">
                   <Sparkles size={14} className="text-orange-400" />
@@ -512,10 +865,9 @@ export function LiveWallPage({ isAdmin }: LiveWallPageProps) {
                 </h2>
               </div>
 
-              {/* FLOATING RESPONSE BUBBLE CLOUD STAGE */}
+              {/* Response Bubble Stage */}
               <div className="flex-1 relative w-full my-4 flex items-center justify-center overflow-hidden min-h-[350px]">
                 {aggregatedBubbles.length === 0 ? (
-                  /* FALLBACK: WAITING FOR RESPONSES */
                   <motion.div
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
@@ -536,10 +888,8 @@ export function LiveWallPage({ isAdmin }: LiveWallPageProps) {
                     </div>
                   </motion.div>
                 ) : (
-                  /* FLOATING BUBBLE CLOUD DISPLAY */
                   <div className="relative w-full h-full flex items-center justify-center max-w-6xl mx-auto">
                     {aggregatedBubbles.map((bubble, index) => {
-                      // Golden ratio spiral positioning distribution
                       const count = aggregatedBubbles.length;
                       const phi = 137.5 * (Math.PI / 180);
                       const radiusFactor = Math.min(260, 40 + Math.sqrt(index + 1) * 55);
@@ -548,14 +898,11 @@ export function LiveWallPage({ isAdmin }: LiveWallPageProps) {
                       const posX = Math.cos(angle) * radiusFactor;
                       const posY = Math.sin(angle) * (radiusFactor * 0.62);
 
-                      // Floating keyframe offsets
                       const floatX = (index % 2 === 0 ? 1 : -1) * (10 + (index % 4) * 4);
                       const floatY = (index % 3 === 0 ? -1 : 1) * (12 + (index % 3) * 5);
                       const duration = 5 + (index % 5) * 1.2;
 
-                      // Size calculation based on frequency
                       const baseScale = 1 + Math.min(0.6, (bubble.count - 1) * 0.12);
-
                       const style = bubbleColorStyles[bubble.colorIndex];
 
                       return (
@@ -585,7 +932,6 @@ export function LiveWallPage({ isAdmin }: LiveWallPageProps) {
                             {bubble.displayText}
                           </span>
 
-                          {/* Multiplier Tag if count > 1 */}
                           {bubble.count > 1 && (
                             <span
                               className={`px-2 py-0.5 rounded-full text-xs font-mono font-black tracking-wider ${style.countBg} flex items-center gap-1 shadow-md`}
@@ -601,7 +947,7 @@ export function LiveWallPage({ isAdmin }: LiveWallPageProps) {
                 )}
               </div>
 
-              {/* FOOTER STATS STRIP */}
+              {/* Footer Strip */}
               <div className="pt-3 border-t border-neutral-800/80 flex items-center justify-between text-xs font-mono text-neutral-400 shrink-0">
                 <div className="flex items-center gap-2">
                   <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping" />
@@ -617,14 +963,14 @@ export function LiveWallPage({ isAdmin }: LiveWallPageProps) {
         ) : (
           /* IDLE STAGE STATE */
           <div className="my-auto text-center space-y-5 max-w-lg mx-auto p-8 rounded-3xl bg-neutral-900/60 border border-neutral-800">
-            <div className="w-16 h-16 rounded-2xl bg-purple-500/15 border border-purple-500/30 text-purple-400 flex items-center justify-center mx-auto shadow-xl">
+            <div className="w-16 h-16 rounded-2xl bg-orange-500/15 border border-orange-500/30 text-orange-400 flex items-center justify-center mx-auto shadow-xl">
               <Tv size={32} />
             </div>
 
             <div className="space-y-2">
               <h2 className="text-2xl font-black text-white tracking-tight">Projector Display Ready</h2>
               <p className="text-xs font-mono text-neutral-400 leading-relaxed">
-                No question is currently broadcast on stage. When the host publishes a question from the Admin Dashboard, it will appear here in real time.
+                Stage is synced with host controls. Start Quiz, Crossword, or Riddles from the Admin Panel to broadcast live to this wall.
               </p>
             </div>
           </div>

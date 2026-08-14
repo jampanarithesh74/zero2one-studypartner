@@ -7,45 +7,54 @@ import {
   Sparkles, 
   Trophy, 
   Lightbulb, 
-  ChevronRight, 
-  ChevronLeft,
   AlertCircle,
   Eye,
   Send,
   Loader2,
-  Database
+  Database,
+  Lock,
+  Radio
 } from "lucide-react";
 import { CROSSWORD_ACTIVITIES, CrosswordActivity, CrosswordClue } from "../../data/engineeringFailureData";
 import { Participant } from "../ParticipantOnboarding";
-import { CrosswordService, CrosswordLeaderboardEntry } from "../../services/activityService";
+import { CrosswordService, CrosswordLeaderboardEntry, CrosswordBroadcastState } from "../../services/activityService";
 import { isCrosswordConfigured } from "../../lib/firebaseProjects";
 
 interface CrosswordActivityViewProps {
   eventId: string;
   currentParticipant?: (Participant & { id: string }) | null;
   isAdmin?: boolean;
+  broadcast?: CrosswordBroadcastState;
 }
 
 export function CrosswordActivityView({
   eventId,
   currentParticipant,
   isAdmin = false,
+  broadcast,
 }: CrosswordActivityViewProps) {
-  const [selectedPuzzleIdx, setSelectedPuzzleIdx] = useState<number>(0);
+  // If participant, puzzle index is strictly locked to admin broadcast
+  const [internalPuzzleIdx, setInternalPuzzleIdx] = useState<number>(0);
+  const selectedPuzzleIdx = !isAdmin && broadcast ? broadcast.puzzleIndex : internalPuzzleIdx;
   const puzzle = CROSSWORD_ACTIVITIES[selectedPuzzleIdx] || CROSSWORD_ACTIVITIES[0];
 
   const [selectedCell, setSelectedCell] = useState<{ row: number; col: number } | null>(null);
   const [activeDirection, setActiveDirection] = useState<"across" | "down">("across");
   const [userGrid, setUserGrid] = useState<Record<string, string>>({});
-  const [revealedSolutions, setRevealedSolutions] = useState<boolean>(false);
-  const [showHintForClue, setShowHintForClue] = useState<number | null>(null);
+  const [adminRevealedSolutions, setAdminRevealedSolutions] = useState<boolean>(false);
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
+  const [isSubmittedLocal, setIsSubmittedLocal] = useState<boolean>(false);
   const [feedbackMsg, setFeedbackMsg] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
-  const [viewMode, setViewMode] = useState<"grid" | "leaderboard">("grid");
+  const [internalViewMode, setInternalViewMode] = useState<"grid" | "leaderboard">("grid");
   const [leaderboard, setLeaderboard] = useState<CrosswordLeaderboardEntry[]>([]);
 
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  // Effective reveal & freeze states
+  const isRevealedEffective = (!isAdmin && broadcast?.isRevealed) || (isAdmin && adminRevealedSolutions) || broadcast?.stage === "reveal";
+  const isFrozenEffective = (!isAdmin && (broadcast?.isFrozen || broadcast?.stage === "frozen" || isSubmittedLocal));
+  const viewMode = (!isAdmin && broadcast?.stage === "leaderboard") ? "leaderboard" : internalViewMode;
 
   // 1. Build puzzle matrix from clues
   const { gridMatrix, cellClueMap, clueStartMap } = useMemo(() => {
@@ -79,6 +88,7 @@ export function CrosswordActivityView({
   // Load saved local progress for this puzzle
   useEffect(() => {
     const savedKey = `z2o_crossword_${eventId}_${puzzle.id}_${currentParticipant?.id || "local"}`;
+    const submitKey = `z2o_crossword_sub_${eventId}_${puzzle.id}_${currentParticipant?.id || "local"}`;
     try {
       const raw = localStorage.getItem(savedKey);
       if (raw) {
@@ -86,17 +96,20 @@ export function CrosswordActivityView({
       } else {
         setUserGrid({});
       }
+      setIsSubmittedLocal(localStorage.getItem(submitKey) === "true");
     } catch (e) {
       setUserGrid({});
+      setIsSubmittedLocal(false);
     }
-    setRevealedSolutions(false);
+    setAdminRevealedSolutions(false);
     setIsCompleted(false);
     setFeedbackMsg("");
     setSelectedCell(null);
   }, [puzzle.id, eventId, currentParticipant?.id]);
 
-  // Save local progress on update (Local only - Zero Firestore writes per keystroke!)
+  // Save local progress on update
   const saveUserGridLocal = (newGrid: Record<string, string>) => {
+    if (isFrozenEffective) return;
     setUserGrid(newGrid);
     const savedKey = `z2o_crossword_${eventId}_${puzzle.id}_${currentParticipant?.id || "local"}`;
     try {
@@ -157,6 +170,7 @@ export function CrosswordActivityView({
 
   // Key navigation and input
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>, r: number, c: number) => {
+    if (isFrozenEffective) return;
     const key = e.key;
 
     if (key === "Backspace") {
@@ -224,7 +238,10 @@ export function CrosswordActivityView({
   };
 
   // Validate user solution & Write ONE atomic submission record to Project 2 (Crossword Firestore)
+  // FREEZES answer locally upon submission
   const handleCheckSolution = async () => {
+    if (isFrozenEffective && !isAdmin) return;
+
     let totalCells = 0;
     let correctCells = 0;
     let isFullyFilled = true;
@@ -247,14 +264,23 @@ export function CrosswordActivityView({
 
     if (isFullySolved) {
       setIsCompleted(true);
-      setFeedbackMsg("🎉 Flawless! You've correctly solved the entire crossword puzzle!");
+      setFeedbackMsg("🎉 Solution Submitted! All answers are correct & locked in.");
     } else {
       const pct = Math.round((correctCells / totalCells) * 100);
       setFeedbackMsg(
-        `Accuracy: ${correctCells}/${totalCells} letters correct (${pct}%). ${
-          !isFullyFilled ? "Some cells are still blank." : "Keep refining your entries!"
-        }`
+        `Answer submitted & locked. Accuracy: ${correctCells}/${totalCells} letters correct (${pct}%).`
       );
+    }
+
+    // Freeze participant answers locally
+    if (!isAdmin) {
+      setIsSubmittedLocal(true);
+      const submitKey = `z2o_crossword_sub_${eventId}_${puzzle.id}_${currentParticipant?.id || "local"}`;
+      try {
+        localStorage.setItem(submitKey, "true");
+      } catch (e) {
+        console.warn("Could not save submit state:", e);
+      }
     }
 
     // Submit to Project 2 (Crossword Firestore)
@@ -284,16 +310,17 @@ export function CrosswordActivityView({
     }
   };
 
-  // Reset grid
+  // Reset grid (allowed for admin or unsubmitted user)
   const handleResetGrid = () => {
+    if (isFrozenEffective && !isAdmin) return;
     saveUserGridLocal({});
-    setRevealedSolutions(false);
+    setAdminRevealedSolutions(false);
     setIsCompleted(false);
     setFeedbackMsg("Grid cleared.");
     setTimeout(() => setFeedbackMsg(""), 2500);
   };
 
-  // Check if a clue is currently active/highlighted
+  // Check if a cell is currently active/highlighted
   const isCellInActiveClue = (r: number, c: number) => {
     if (!activeClue) return false;
     for (let i = 0; i < activeClue.answer.length; i++) {
@@ -311,8 +338,14 @@ export function CrosswordActivityView({
         <div className="flex items-center gap-2">
           <span className="text-base">🧩</span>
           <div>
-            <h2 className="text-xs font-black uppercase tracking-wider text-white">
-              {puzzle.title}
+            <h2 className="text-xs font-black uppercase tracking-wider text-white flex items-center gap-2">
+              <span>{puzzle.title}</span>
+              {isFrozenEffective && !isAdmin && (
+                <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-bold bg-amber-500/15 border border-amber-500/30 text-amber-400 inline-flex items-center gap-1">
+                  <Lock size={10} />
+                  <span>ANSWERS FROZEN</span>
+                </span>
+              )}
             </h2>
             <span className="text-[10px] text-neutral-400 font-medium block">
               {puzzle.theme}
@@ -320,40 +353,49 @@ export function CrosswordActivityView({
           </div>
         </div>
 
-        {/* View Switcher & Project 2 Indicator */}
+        {/* View Switcher: Admin Only */}
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 bg-neutral-950 p-1 rounded-xl border border-neutral-800">
-            {CROSSWORD_ACTIVITIES.map((p, idx) => (
+          {isAdmin ? (
+            <div className="flex items-center gap-1.5 bg-neutral-950 p-1 rounded-xl border border-neutral-800">
+              {CROSSWORD_ACTIVITIES.map((p, idx) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => {
+                    setInternalPuzzleIdx(idx);
+                    setInternalViewMode("grid");
+                  }}
+                  className={`px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold transition-all cursor-pointer ${
+                    selectedPuzzleIdx === idx && viewMode === "grid"
+                      ? "bg-orange-500 text-white shadow-sm"
+                      : "text-neutral-400 hover:text-white"
+                  }`}
+                >
+                  Crossword #{idx + 1}
+                </button>
+              ))}
+
               <button
-                key={p.id}
                 type="button"
-                onClick={() => {
-                  setSelectedPuzzleIdx(idx);
-                  setViewMode("grid");
-                }}
-                className={`px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold transition-all cursor-pointer ${
-                  selectedPuzzleIdx === idx && viewMode === "grid"
-                    ? "bg-orange-500 text-white shadow-sm"
-                    : "text-neutral-400 hover:text-white"
+                onClick={() => setInternalViewMode(viewMode === "leaderboard" ? "grid" : "leaderboard")}
+                className={`px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                  viewMode === "leaderboard"
+                    ? "bg-amber-500 text-slate-950 shadow-sm"
+                    : "text-neutral-400 hover:text-amber-400"
                 }`}
               >
-                Crossword #{idx + 1}
+                <Trophy size={11} />
+                <span>Standings</span>
               </button>
-            ))}
-
-            <button
-              type="button"
-              onClick={() => setViewMode(viewMode === "leaderboard" ? "grid" : "leaderboard")}
-              className={`px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold transition-all cursor-pointer flex items-center gap-1 ${
-                viewMode === "leaderboard"
-                  ? "bg-amber-500 text-slate-950 shadow-sm"
-                  : "text-neutral-400 hover:text-amber-400"
-              }`}
-            >
-              <Trophy size={11} />
-              <span>Standings</span>
-            </button>
-          </div>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="px-2.5 py-1 rounded-lg bg-orange-500/15 border border-orange-500/30 text-orange-400 text-[10px] font-mono font-black uppercase tracking-wider flex items-center gap-1.5">
+                <Radio size={11} className="animate-pulse text-orange-400" />
+                <span>CROSSWORD #{selectedPuzzleIdx + 1} LIVE</span>
+              </span>
+            </div>
+          )}
 
           <span
             className={`px-2 py-0.5 rounded-full text-[9px] font-mono font-bold border hidden sm:inline-flex items-center gap-1 ${
@@ -361,14 +403,9 @@ export function CrosswordActivityView({
                 ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
                 : "bg-amber-500/10 text-amber-400 border-amber-500/30"
             }`}
-            title={
-              isCrosswordConfigured
-                ? "Project 2 (Crossword Firestore) Isolated"
-                : "Project 2 configuration needed for multi-project isolation"
-            }
           >
             <Database size={9} />
-            <span>{isCrosswordConfigured ? "PROJECT 2 ACTIVE" : "PROJECT 2 PENDING"}</span>
+            <span>PROJECT 2</span>
           </span>
         </div>
       </div>
@@ -379,20 +416,22 @@ export function CrosswordActivityView({
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-black text-white flex items-center gap-2">
               <Trophy size={16} className="text-amber-400" />
-              <span>Crossword Standings (Project 2 Isolated)</span>
+              <span>Crossword #{selectedPuzzleIdx + 1} Standings (Project 2 Isolated)</span>
             </h3>
-            <button
-              type="button"
-              onClick={() => setViewMode("grid")}
-              className="text-xs font-mono font-bold text-orange-400 hover:underline cursor-pointer"
-            >
-              ← Back to Puzzle
-            </button>
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => setInternalViewMode("grid")}
+                className="text-xs font-mono font-bold text-orange-400 hover:underline cursor-pointer"
+              >
+                ← Back to Puzzle
+              </button>
+            )}
           </div>
 
           {leaderboard.length === 0 ? (
             <div className="p-8 text-center text-xs text-neutral-400 bg-neutral-950 rounded-xl border border-neutral-800">
-              No crossword submissions recorded yet. Complete the puzzle and click "Check & Submit Solution" to enter the leaderboard!
+              No crossword submissions recorded yet. Complete the puzzle and submit to appear on the leaderboard!
             </div>
           ) : (
             <div className="space-y-2">
@@ -421,149 +460,177 @@ export function CrosswordActivityView({
           )}
         </div>
       ) : (
-        <div className="flex-1 p-4 sm:p-5 flex flex-col lg:flex-row gap-5 overflow-y-auto">
-          {/* Left: Crossword Interactive Grid */}
-          <div className="flex-1 flex flex-col items-center justify-start space-y-4">
-            {/* Active Clue Bar */}
-            <div className="w-full p-2.5 rounded-xl bg-neutral-900/90 border border-orange-500/30 text-xs text-white flex items-center justify-between gap-2 shadow-inner">
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="px-2 py-0.5 rounded-md bg-orange-500/20 text-orange-400 font-mono font-black text-[10px] shrink-0 uppercase">
-                  {activeClue ? `${activeClue.number} ${activeClue.direction}` : "Select a cell"}
-                </span>
-                <span className="font-medium text-neutral-200 truncate text-[11px]">
-                  {activeClue ? activeClue.clue : "Click any crossword cell or clue to begin"}
-                </span>
-              </div>
-              {activeClue && (
-                <span className="text-[10px] font-mono text-neutral-400 shrink-0">
-                  ({activeClue.answer.length} letters)
-                </span>
-              )}
+        <div className="flex-1 p-4 sm:p-5 flex flex-col items-center justify-start space-y-4 overflow-y-auto">
+          {/* Active Clue Bar (Shown prominent right above/below grid when clicked) */}
+          <div className="w-full max-w-2xl p-3 rounded-xl bg-neutral-900/90 border border-orange-500/40 text-xs text-white flex items-center justify-between gap-2 shadow-inner">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="px-2.5 py-1 rounded-md bg-orange-500 text-white font-mono font-black text-[10px] shrink-0 uppercase shadow-sm">
+                {activeClue ? `${activeClue.number} ${activeClue.direction}` : "Click any cell"}
+              </span>
+              <span className="font-bold text-white truncate text-xs sm:text-sm">
+                {activeClue ? activeClue.clue : "Click a numbered crossword block below to read its question"}
+              </span>
             </div>
+            {activeClue && (
+              <span className="text-[10px] font-mono text-orange-400 font-black shrink-0 px-2 py-0.5 rounded bg-neutral-950 border border-neutral-800">
+                {activeClue.answer.length} letters
+              </span>
+            )}
+          </div>
 
-            {/* Crossword Grid Matrix */}
-            <div className="p-3 sm:p-4 rounded-2xl bg-neutral-950 border border-neutral-800 shadow-2xl flex items-center justify-center overflow-x-auto max-w-full">
-              <div
-                className="grid gap-1 select-none"
-                style={{
-                  gridTemplateColumns: `repeat(${puzzle.gridCols}, minmax(28px, 36px))`,
-                  gridTemplateRows: `repeat(${puzzle.gridRows}, minmax(28px, 36px))`,
-                }}
-              >
-                {Array.from({ length: puzzle.gridRows }).map((_, r) =>
-                  Array.from({ length: puzzle.gridCols }).map((_, c) => {
-                    const correctChar = gridMatrix[r][c];
-                    const isBlocked = correctChar === null;
-                    const cellKey = `${r},${c}`;
-                    const userChar = userGrid[cellKey] || "";
-                    const clueNum = clueStartMap[cellKey];
-                    const isSelected = selectedCell?.row === r && selectedCell?.col === c;
-                    const isInWord = isCellInActiveClue(r, c);
+          {/* Crossword Grid Matrix */}
+          <div className="p-3 sm:p-4 rounded-2xl bg-neutral-950 border border-neutral-800 shadow-2xl flex items-center justify-center overflow-x-auto max-w-full">
+            <div
+              className="grid gap-1 select-none"
+              style={{
+                gridTemplateColumns: `repeat(${puzzle.gridCols}, minmax(28px, 38px))`,
+                gridTemplateRows: `repeat(${puzzle.gridRows}, minmax(28px, 38px))`,
+              }}
+            >
+              {Array.from({ length: puzzle.gridRows }).map((_, r) =>
+                Array.from({ length: puzzle.gridCols }).map((_, c) => {
+                  const correctChar = gridMatrix[r][c];
+                  const isBlocked = correctChar === null;
+                  const cellKey = `${r},${c}`;
+                  const userChar = userGrid[cellKey] || "";
+                  const clueNum = clueStartMap[cellKey];
+                  const isSelected = selectedCell?.row === r && selectedCell?.col === c;
+                  const isInWord = isCellInActiveClue(r, c);
 
-                    if (isBlocked) {
-                      return (
-                        <div
-                          key={`${r}-${c}`}
-                          className="w-full h-full bg-[#0d0d0d] rounded-md border border-neutral-900/60"
-                        />
-                      );
-                    }
-
+                  if (isBlocked) {
                     return (
                       <div
                         key={`${r}-${c}`}
-                        onClick={() => handleCellClick(r, c)}
-                        className={`relative w-full h-full rounded-md font-mono font-black text-sm sm:text-base flex items-center justify-center cursor-pointer transition-all border ${
-                          isSelected
-                            ? "bg-orange-500 text-white border-orange-400 shadow-md ring-2 ring-orange-400/40 z-20"
-                            : isInWord
-                            ? "bg-orange-500/20 text-orange-200 border-orange-500/40 z-10"
-                            : "bg-neutral-900 text-white border-neutral-700 hover:border-neutral-500"
-                        }`}
-                      >
-                        {clueNum && (
-                          <span
-                            className={`absolute top-0.5 left-0.5 text-[8px] font-mono leading-none ${
-                              isSelected ? "text-white" : "text-neutral-400 font-bold"
-                            }`}
-                          >
-                            {clueNum}
-                          </span>
-                        )}
-
-                        <input
-                          ref={(el) => {
-                            inputRefs.current[`${r}-${c}`] = el;
-                          }}
-                          type="text"
-                          maxLength={1}
-                          value={revealedSolutions ? correctChar || "" : userChar}
-                          onKeyDown={(e) => handleKeyDown(e, r, c)}
-                          onChange={() => {}}
-                          className="w-full h-full text-center bg-transparent border-none outline-none font-mono font-black uppercase text-inherit cursor-pointer"
-                        />
-                      </div>
+                        className="w-full h-full bg-[#0d0d0d] rounded-md border border-neutral-900/60"
+                      />
                     );
-                  })
-                )}
-              </div>
-            </div>
+                  }
 
-            {/* Action Bar */}
-            <div className="flex flex-wrap items-center justify-center gap-2.5 pt-1">
+                  return (
+                    <div
+                      key={`${r}-${c}`}
+                      onClick={() => handleCellClick(r, c)}
+                      className={`relative w-full h-full rounded-md font-mono font-black text-sm sm:text-base flex items-center justify-center cursor-pointer transition-all border ${
+                        isSelected
+                          ? "bg-orange-500 text-white border-orange-400 shadow-md ring-2 ring-orange-400/40 z-20"
+                          : isInWord
+                          ? "bg-orange-500/20 text-orange-200 border-orange-500/40 z-10"
+                          : "bg-neutral-900 text-white border-neutral-700 hover:border-neutral-500"
+                      }`}
+                    >
+                      {clueNum && (
+                        <span
+                          className={`absolute top-0.5 left-0.5 text-[8px] font-mono leading-none ${
+                            isSelected ? "text-white font-bold" : "text-neutral-400 font-bold"
+                          }`}
+                        >
+                          {clueNum}
+                        </span>
+                      )}
+
+                      <input
+                        ref={(el) => {
+                          inputRefs.current[`${r}-${c}`] = el;
+                        }}
+                        type="text"
+                        maxLength={1}
+                        disabled={isFrozenEffective}
+                        value={isRevealedEffective ? correctChar || "" : userChar}
+                        onKeyDown={(e) => handleKeyDown(e, r, c)}
+                        onChange={() => {}}
+                        className={`w-full h-full text-center bg-transparent border-none outline-none font-mono font-black uppercase text-inherit ${
+                          isFrozenEffective ? "cursor-not-allowed opacity-90" : "cursor-pointer"
+                        }`}
+                      />
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* Question Clue Box - Directly below the crossword as requested */}
+          {activeClue && (
+            <motion.div
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="w-full max-w-2xl p-3.5 rounded-xl bg-gradient-to-r from-neutral-900 to-neutral-950 border border-orange-500/30 text-white shadow-lg space-y-1"
+            >
+              <div className="flex items-center justify-between text-[11px] font-mono text-orange-400 font-black uppercase">
+                <span>Active Clue #{activeClue.number} ({activeClue.direction})</span>
+                <span>{activeClue.answer.length} Letters</span>
+              </div>
+              <p className="text-xs sm:text-sm font-semibold text-neutral-100">
+                "{activeClue.clue}"
+              </p>
+            </motion.div>
+          )}
+
+          {/* Action Bar */}
+          <div className="flex flex-wrap items-center justify-center gap-2.5 pt-1">
+            {!isFrozenEffective ? (
               <button
                 type="button"
                 onClick={handleCheckSolution}
                 disabled={isSubmitting}
-                className="px-4 py-2 rounded-xl bg-orange-500 hover:bg-orange-600 text-white text-xs font-black uppercase tracking-wider transition-all cursor-pointer shadow-lg shadow-orange-500/20 flex items-center gap-1.5 border border-orange-400/40 disabled:opacity-50"
+                className="px-5 py-2.5 rounded-xl bg-orange-500 hover:bg-orange-600 active:scale-95 text-white text-xs font-black uppercase tracking-wider transition-all cursor-pointer shadow-lg shadow-orange-500/20 flex items-center gap-1.5 border border-orange-400/40 disabled:opacity-50"
               >
                 {isSubmitting ? (
                   <Loader2 size={13} className="animate-spin" />
                 ) : (
                   <CheckCircle2 size={13} />
                 )}
-                <span>Check & Submit Solution</span>
+                <span>Submit & Freeze Solution</span>
               </button>
-
-              <button
-                type="button"
-                onClick={handleResetGrid}
-                className="px-3 py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-300 text-xs font-bold transition-all cursor-pointer border border-neutral-800 flex items-center gap-1"
-              >
-                <RotateCcw size={13} />
-                <span>Reset Grid</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setRevealedSolutions((prev) => !prev)}
-                className="px-3 py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-400 hover:text-amber-400 text-xs font-bold transition-all cursor-pointer border border-neutral-800 flex items-center gap-1"
-              >
-                <Eye size={13} />
-                <span>{revealedSolutions ? "Hide Answers" : "Reveal All"}</span>
-              </button>
-            </div>
-
-            {/* Feedback message */}
-            {feedbackMsg && (
-              <div
-                className={`w-full p-2.5 rounded-xl border text-xs font-medium ${
-                  isCompleted
-                    ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
-                    : "bg-neutral-900 border-neutral-800 text-neutral-300"
-                }`}
-              >
-                {feedbackMsg}
+            ) : (
+              <div className="px-4 py-2 rounded-xl bg-neutral-900 border border-amber-500/30 text-amber-300 text-xs font-mono font-bold flex items-center gap-1.5">
+                <Lock size={13} className="text-amber-400" />
+                <span>Answers Submitted & Frozen</span>
               </div>
+            )}
+
+            {isAdmin && (
+              <>
+                <button
+                  type="button"
+                  onClick={handleResetGrid}
+                  className="px-3 py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-300 text-xs font-bold transition-all cursor-pointer border border-neutral-800 flex items-center gap-1"
+                >
+                  <RotateCcw size={13} />
+                  <span>Reset Grid</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setAdminRevealedSolutions((prev) => !prev)}
+                  className="px-3 py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-400 hover:text-amber-400 text-xs font-bold transition-all cursor-pointer border border-neutral-800 flex items-center gap-1"
+                >
+                  <Eye size={13} />
+                  <span>{adminRevealedSolutions ? "Hide Answers" : "Reveal All"}</span>
+                </button>
+              </>
             )}
           </div>
 
-          {/* Right: Across & Down Clues Panels */}
-          <div className="w-full lg:w-72 flex flex-col space-y-4 shrink-0">
+          {/* Feedback message */}
+          {feedbackMsg && (
+            <div
+              className={`w-full max-w-2xl p-3 rounded-xl border text-xs font-medium ${
+                isCompleted
+                  ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
+                  : "bg-neutral-900 border-neutral-800 text-neutral-300"
+              }`}
+            >
+              {feedbackMsg}
+            </div>
+          )}
+
+          {/* Clues Summary Grid (Below Crossword & Actions) */}
+          <div className="w-full max-w-3xl grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
             {/* Across Clues */}
             <div className="p-3.5 rounded-2xl bg-neutral-900/90 border border-neutral-800 space-y-2">
               <h3 className="text-xs font-black font-mono text-orange-400 uppercase tracking-wider flex items-center gap-1.5">
-                <span>➡ ACROSS CLUES</span>
+                <span>➡ 6 ACROSS CLUES</span>
               </h3>
               <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
                 {puzzle.clues
@@ -594,7 +661,7 @@ export function CrosswordActivityView({
             {/* Down Clues */}
             <div className="p-3.5 rounded-2xl bg-neutral-900/90 border border-neutral-800 space-y-2">
               <h3 className="text-xs font-black font-mono text-orange-400 uppercase tracking-wider flex items-center gap-1.5">
-                <span>⬇ DOWN CLUES</span>
+                <span>⬇ 6 DOWN CLUES</span>
               </h3>
               <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
                 {puzzle.clues
