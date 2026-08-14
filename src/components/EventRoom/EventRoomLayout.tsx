@@ -67,19 +67,21 @@ export function EventRoomLayout({
 
       {/* 2. Mobile / Tablet Tab Selector (Hidden on Desktop lg:hidden) */}
       <div className="lg:hidden bg-neutral-900/90 border-b border-neutral-800 p-2 sticky top-[73px] z-30">
-        <div className="grid grid-cols-3 gap-1 max-w-md mx-auto">
-          <button
-            type="button"
-            onClick={() => setActiveTab("participants")}
-            className={`py-2 px-3 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5 border ${
-              activeTab === "participants"
-                ? "bg-orange-500 text-white border-orange-400 shadow-md"
-                : "bg-neutral-950 text-neutral-400 border-neutral-800 hover:text-white"
-            }`}
-          >
-            <Users size={13} />
-            <span>Members ({participants.length})</span>
-          </button>
+        <div className={`grid ${isAdmin ? "grid-cols-3" : "grid-cols-2"} gap-1 max-w-md mx-auto`}>
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => setActiveTab("participants")}
+              className={`py-2 px-3 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5 border ${
+                activeTab === "participants"
+                  ? "bg-orange-500 text-white border-orange-400 shadow-md"
+                  : "bg-neutral-950 text-neutral-400 border-neutral-800 hover:text-white"
+              }`}
+            >
+              <Users size={13} />
+              <span>Members ({participants.length})</span>
+            </button>
+          )}
 
           <button
             type="button"
@@ -109,45 +111,63 @@ export function EventRoomLayout({
         </div>
       </div>
 
-      {/* 3. Main Three-Panel Grid Content */}
+      {/* 3. Main Grid Content */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-4 md:p-6 flex flex-col">
-        {/* Desktop View: Three Side-by-Side Panels (25% / 50% / 25%) */}
-        <div className="hidden lg:grid lg:grid-cols-12 lg:gap-5 flex-1 min-h-[calc(100vh-160px)]">
-          {/* Left Panel: Participants (25% = col-span-3) */}
-          <div className="lg:col-span-3 h-full">
-            <ParticipantsPanel
-              event={event}
-              participants={participants}
-              filteredParticipants={filteredParticipants}
-              currentParticipant={currentParticipant}
-              searchQuery={searchQuery}
-              setSearchQuery={setSearchQuery}
-              selectedDept={selectedDept}
-              setSelectedDept={setSelectedDept}
-              availableDepts={availableDepts}
-              onConnectClick={onConnectClick}
-            />
-          </div>
+        {/* Desktop View */}
+        {isAdmin ? (
+          <div className="hidden lg:grid lg:grid-cols-12 lg:gap-5 flex-1 min-h-[calc(100vh-160px)]">
+            {/* Left Panel: Participants (col-span-3) */}
+            <div className="lg:col-span-3 h-full">
+              <ParticipantsPanel
+                event={event}
+                participants={participants}
+                filteredParticipants={filteredParticipants}
+                currentParticipant={currentParticipant}
+                searchQuery={searchQuery}
+                setSearchQuery={setSearchQuery}
+                selectedDept={selectedDept}
+                setSelectedDept={setSelectedDept}
+                availableDepts={availableDepts}
+                onConnectClick={onConnectClick}
+              />
+            </div>
 
-          {/* Center Panel: Live Room (50% = col-span-6) */}
-          <div className="lg:col-span-6 h-full">
-            <LiveRoomPanel
-              event={event}
-              currentParticipant={currentParticipant}
-              isAdmin={isAdmin}
-              onOpenAskModal={() => setIsAskModalOpen(true)}
-            />
-          </div>
+            {/* Center Panel: Live Room (col-span-6) */}
+            <div className="lg:col-span-6 h-full">
+              <LiveRoomPanel
+                event={event}
+                currentParticipant={currentParticipant}
+                isAdmin={isAdmin}
+                onOpenAskModal={() => setIsAskModalOpen(true)}
+              />
+            </div>
 
-          {/* Right Panel: Chat Room (25% = col-span-3) */}
-          <div className="lg:col-span-3 h-full">
-            <ChatPanel event={event} />
+            {/* Right Panel: Chat Room (col-span-3) */}
+            <div className="lg:col-span-3 h-full">
+              <ChatPanel event={event} />
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="hidden lg:grid lg:grid-cols-12 lg:gap-6 flex-1 min-h-[calc(100vh-160px)]">
+            {/* Main Stage: Live Room (col-span-8) */}
+            <div className="lg:col-span-8 h-full">
+              <LiveRoomPanel
+                event={event}
+                currentParticipant={currentParticipant}
+                isAdmin={false}
+              />
+            </div>
+
+            {/* Right Panel: Chat Room (col-span-4) */}
+            <div className="lg:col-span-4 h-full">
+              <ChatPanel event={event} />
+            </div>
+          </div>
+        )}
 
         {/* Mobile/Tablet View: Tabbed Layout */}
         <div className="lg:hidden flex-1 min-h-[500px]">
-          {activeTab === "participants" && (
+          {isAdmin && activeTab === "participants" && (
             <ParticipantsPanel
               event={event}
               participants={participants}

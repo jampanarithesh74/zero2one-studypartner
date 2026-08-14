@@ -111,11 +111,15 @@ export function RoomHeader({
               <strong className="text-neutral-300">Room Type:</strong>{" "}
               {isNormalRoom ? "Normal Room" : "LinkedIn Sync"}
             </span>
-            <span className="text-neutral-600">|</span>
-            <span className="flex items-center gap-1 text-neutral-300 font-bold">
-              <Users size={11} className="text-orange-400" />
-              {participantCount} Active
-            </span>
+            {isAdmin && (
+              <>
+                <span className="text-neutral-600">|</span>
+                <span className="flex items-center gap-1 text-neutral-300 font-bold">
+                  <Users size={11} className="text-orange-400" />
+                  {participantCount} Active
+                </span>
+              </>
+            )}
           </div>
 
           <div className="flex items-center gap-3 shrink-0">

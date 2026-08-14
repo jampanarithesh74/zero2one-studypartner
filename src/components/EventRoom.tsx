@@ -30,8 +30,14 @@ export function EventRoom({
   const [selectedDept, setSelectedDept] = useState<string>("All");
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
 
-  // Subscribe to real-time participants subcollection
+  // Subscribe to real-time participants subcollection ONLY if admin
   useEffect(() => {
+    if (!isAdmin) {
+      setParticipants([currentParticipant]);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     const participantsRef = collection(db, "events", event.id, "participants");
     const q = query(participantsRef, orderBy("joinedAt", "desc"), limit(100));
@@ -70,7 +76,7 @@ export function EventRoom({
     return () => {
       if (activeUnsub) activeUnsub();
     };
-  }, [event.id]);
+  }, [event.id, isAdmin, currentParticipant]);
 
   // Extract unique departments dynamically from real participant list
   const availableDepts = useMemo(() => {

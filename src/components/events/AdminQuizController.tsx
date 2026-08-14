@@ -30,7 +30,10 @@ import {
 } from "firebase/firestore";
 import { db } from "../../lib/firebase";
 import { DEMO_QUIZ_QUESTIONS, QuizSessionData, QuizLeaderboardEntry } from "../../data/quizQuestions";
+import { CROSSWORD_ACTIVITIES, RIDDLE_ACTIVITIES } from "../../data/engineeringFailureData";
 import { QuizLeaderboardView } from "./QuizLeaderboardView";
+import { CrosswordActivityView } from "./CrosswordActivityView";
+import { RiddleActivityView } from "./RiddleActivityView";
 
 interface AdminQuizControllerProps {
   eventId: string;
@@ -408,29 +411,37 @@ export function AdminQuizController({
 
             <button
               type="button"
-              onClick={() => showToast("🧩 Crossword: Coming Soon!")}
-              className="p-3 rounded-xl font-bold text-xs bg-neutral-900/60 border border-neutral-800/80 text-neutral-400 hover:text-neutral-300 transition-all flex items-center justify-between cursor-pointer"
+              onClick={() => setSelectedActivity("crossword")}
+              className={`p-3 rounded-xl font-bold text-xs transition-all flex items-center justify-between cursor-pointer border ${
+                selectedActivity === "crossword"
+                  ? "bg-orange-500/15 border-orange-500 text-orange-400 shadow-lg shadow-orange-500/10"
+                  : "bg-neutral-900 border-neutral-800 text-neutral-300 hover:bg-neutral-850"
+              }`}
             >
               <div className="flex items-center gap-2">
                 <span className="text-base">🧩</span>
                 <span>Crossword</span>
               </div>
-              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-400">
-                Coming Soon
+              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-orange-400 font-bold">
+                2 Puzzles
               </span>
             </button>
 
             <button
               type="button"
-              onClick={() => showToast("❓ Riddles: Coming Soon!")}
-              className="p-3 rounded-xl font-bold text-xs bg-neutral-900/60 border border-neutral-800/80 text-neutral-400 hover:text-neutral-300 transition-all flex items-center justify-between cursor-pointer"
+              onClick={() => setSelectedActivity("riddles")}
+              className={`p-3 rounded-xl font-bold text-xs transition-all flex items-center justify-between cursor-pointer border ${
+                selectedActivity === "riddles"
+                  ? "bg-orange-500/15 border-orange-500 text-orange-400 shadow-lg shadow-orange-500/10"
+                  : "bg-neutral-900 border-neutral-800 text-neutral-300 hover:bg-neutral-850"
+              }`}
             >
               <div className="flex items-center gap-2">
                 <span className="text-base">❓</span>
                 <span>Riddles</span>
               </div>
-              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-400">
-                Coming Soon
+              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-orange-400 font-bold">
+                5 Riddles
               </span>
             </button>
           </div>
@@ -438,7 +449,27 @@ export function AdminQuizController({
 
         {/* Dynamic Activity Area */}
         <AnimatePresence mode="wait">
-          {session?.status === "running" ? (
+          {selectedActivity === "crossword" ? (
+            <motion.div
+              key="crossword-view"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="flex-1"
+            >
+              <CrosswordActivityView eventId={eventId} isAdmin={true} />
+            </motion.div>
+          ) : selectedActivity === "riddles" ? (
+            <motion.div
+              key="riddles-view"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="flex-1"
+            >
+              <RiddleActivityView eventId={eventId} isAdmin={true} />
+            </motion.div>
+          ) : session?.status === "running" ? (
             session.stage === "question" ? (
               /* ACTIVE QUESTION MONITOR */
               <motion.div
@@ -451,7 +482,7 @@ export function AdminQuizController({
                 <div className="flex items-center justify-between gap-2">
                   <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-mono font-black uppercase tracking-wider text-orange-400 bg-orange-500/15 border border-orange-500/30">
                     <Sparkles size={11} />
-                    <span>Question {session.currentQuestionIndex + 1} of 5</span>
+                    <span>Question {session.currentQuestionIndex + 1} of {DEMO_QUIZ_QUESTIONS.length}</span>
                   </div>
 
                   <span className="text-xs font-mono font-black text-amber-400 flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/20">
@@ -577,7 +608,7 @@ export function AdminQuizController({
                 <div className="max-h-[360px] overflow-y-auto pr-1">
                   <QuizLeaderboardView
                     leaderboard={leaderboard}
-                    title={`🏆 Standings (Q${session.currentQuestionIndex + 1}/5)`}
+                    title={`🏆 Standings (Q${session.currentQuestionIndex + 1}/${DEMO_QUIZ_QUESTIONS.length})`}
                   />
                 </div>
 
@@ -664,7 +695,7 @@ export function AdminQuizController({
                 </div>
 
                 <h3 className="text-lg font-black text-white tracking-tight">
-                  Engineering Basics Quiz
+                  Engineering Failure Analysis Quiz
                 </h3>
 
                 <div className="grid grid-cols-2 gap-3 py-1">
@@ -673,7 +704,7 @@ export function AdminQuizController({
                       Questions
                     </span>
                     <span className="text-sm font-black text-white font-mono block mt-0.5">
-                      5 Questions
+                      {DEMO_QUIZ_QUESTIONS.length} Questions
                     </span>
                   </div>
 

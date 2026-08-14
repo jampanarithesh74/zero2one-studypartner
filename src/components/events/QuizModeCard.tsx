@@ -253,7 +253,7 @@ export function QuizModeCard({ eventId, currentParticipant, quizSession: passedQ
 
         <div className="flex items-center gap-2">
           <span className="px-2.5 py-1 rounded-full text-[10px] font-mono font-black text-orange-400 bg-orange-500/15 border border-orange-500/30 uppercase tracking-wider">
-            Question {session.currentQuestionIndex + 1} of 5
+            Question {session.currentQuestionIndex + 1} of {session.totalQuestions || 10}
           </span>
         </div>
       </div>

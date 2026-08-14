@@ -3,16 +3,16 @@ import { getFirestore } from "firebase/firestore";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
 import { getStorage } from "firebase/storage";
 
-const firebaseConfig = {
-  apiKey: "AIzaSyB9h_P6RMAdfv5OjPGqeRJOBnQfU9-CbPo",
-  authDomain: "zero2one-studcomp.firebaseapp.com",
-  projectId: "zero2one-studcomp",
-  storageBucket: "zero2one-studcomp.firebasestorage.app",
-  messagingSenderId: "827345021044",
-  appId: "1:827345021044:web:a342847d1d58eee5944921"
+export const firebaseConfig = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyB9h_P6RMAdfv5OjPGqeRJOBnQfU9-CbPo",
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "zero2one-studcomp.firebaseapp.com",
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "zero2one-studcomp",
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "zero2one-studcomp.firebasestorage.app",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "827345021044",
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:827345021044:web:a342847d1d58eee5944921"
 };
 
-const app = initializeApp(firebaseConfig);
+export const app = initializeApp(firebaseConfig);
 
 export const db = getFirestore(app);
 export const auth = getAuth(app);

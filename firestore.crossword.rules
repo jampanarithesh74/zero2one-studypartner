@@ -1,0 +1,33 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Project 2: Crossword Firebase Project Security Rules
+    // Isolated to crossword sessions, participant submissions, and leaderboard
+
+    match /events/{eventId}/activities/crossword {
+      // Crossword Session Document (Admin controlled, public read)
+      match /session/{docId} {
+        allow read: if true;
+        allow write: if true;
+      }
+
+      // Participant Crossword Submissions (Created upon solution check)
+      match /submissions/{submissionId} {
+        allow read: if true;
+        allow create, update: if true;
+        allow delete: if false;
+      }
+
+      // Crossword Activity Leaderboard (Read by all, written on score submit)
+      match /leaderboard/{participantId} {
+        allow read: if true;
+        allow create, update: if true;
+        allow delete: if false;
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
