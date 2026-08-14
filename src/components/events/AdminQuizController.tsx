@@ -34,6 +34,8 @@ import { CROSSWORD_ACTIVITIES, RIDDLE_ACTIVITIES } from "../../data/engineeringF
 import { QuizLeaderboardView } from "./QuizLeaderboardView";
 import { CrosswordActivityView } from "./CrosswordActivityView";
 import { RiddleActivityView } from "./RiddleActivityView";
+import { runMultiProjectDiagnostic, getFirebaseProjectsStatus, DiagnosticResult } from "../../lib/firebaseProjects";
+import { ShieldCheck, Activity } from "lucide-react";
 
 interface AdminQuizControllerProps {
   eventId: string;
@@ -53,6 +55,21 @@ export function AdminQuizController({
   const [toastMsg, setToastMsg] = useState<string>("");
   const [timeRemaining, setTimeRemaining] = useState<number>(30);
   const [activeBroadcast, setActiveBroadcast] = useState<{ activeActivity?: string } | null>(null);
+  const [showDiagModal, setShowDiagModal] = useState<boolean>(false);
+  const [diagLoading, setDiagLoading] = useState<boolean>(false);
+  const [diagResults, setDiagResults] = useState<DiagnosticResult[] | null>(null);
+
+  const handleRunDiagnosticTest = async () => {
+    setDiagLoading(true);
+    try {
+      const res = await runMultiProjectDiagnostic(eventId);
+      setDiagResults(res);
+    } catch (err: any) {
+      console.error("Diagnostic execution error:", err);
+    } finally {
+      setDiagLoading(false);
+    }
+  };
 
   const processedTimerZeroRef = useRef<boolean>(false);
   const answerRevealTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -401,6 +418,20 @@ export function AdminQuizController({
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setShowDiagModal(true);
+              if (!diagResults && !diagLoading) {
+                handleRunDiagnosticTest();
+              }
+            }}
+            className="px-2 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-mono font-bold transition-all cursor-pointer flex items-center gap-1.5 border border-neutral-700"
+            title="Verify 3-Project Firebase Routing"
+          >
+            <Activity size={12} className="text-orange-400" />
+            <span>3-Project Health</span>
+          </button>
           {onBackToControls && (
             <button
               type="button"
@@ -827,6 +858,104 @@ export function AdminQuizController({
           )}
         </AnimatePresence>
       </div>
+
+      {/* Multi-Project Diagnostics Modal */}
+      <AnimatePresence>
+        {showDiagModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-neutral-900 border border-neutral-800 rounded-2xl max-w-xl w-full p-6 shadow-2xl space-y-4"
+            >
+              <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="text-orange-400" size={20} />
+                  <h3 className="text-base font-bold text-white font-mono">
+                    3-Project Firebase Verification
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowDiagModal(false)}
+                  className="text-neutral-400 hover:text-white text-xs font-mono px-2 py-1 rounded-lg bg-neutral-800"
+                >
+                  ✕ Close
+                </button>
+              </div>
+
+              <p className="text-xs text-neutral-400">
+                Verifies that Project 1, Project 2, and Project 3 resolve to independent Firebase projects with no silent fallbacks.
+              </p>
+
+              <div className="space-y-2.5">
+                {diagLoading ? (
+                  <div className="p-6 text-center text-xs font-mono text-neutral-400 space-y-2">
+                    <div className="animate-spin w-5 h-5 border-2 border-orange-500 border-t-transparent rounded-full mx-auto" />
+                    <span>Running lightweight 1-probe read/write verification across all 3 databases...</span>
+                  </div>
+                ) : diagResults ? (
+                  diagResults.map((r, i) => (
+                    <div
+                      key={i}
+                      className={`p-3 rounded-xl border text-xs font-mono flex flex-col gap-1.5 ${
+                        r.status === "success"
+                          ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
+                          : r.status === "missing_config"
+                          ? "bg-amber-500/10 border-amber-500/30 text-amber-300"
+                          : "bg-red-500/10 border-red-500/30 text-red-300"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between font-bold">
+                        <span>{r.project}</span>
+                        <span>
+                          {r.status === "success" && "✅ CONNECTED & ISOLATED"}
+                          {r.status === "missing_config" && "⚠️ CONFIG MISSING"}
+                          {r.status === "error" && "❌ ERROR"}
+                        </span>
+                      </div>
+                      <div className="text-[11px] opacity-80 flex flex-wrap gap-x-4">
+                        <span>Expected: <b className="text-white">{r.expectedProjectId}</b></span>
+                        {r.actualProjectId && (
+                          <span>Configured: <b className="text-white">{r.actualProjectId}</b></span>
+                        )}
+                        {r.latencyMs !== undefined && (
+                          <span>Probe Latency: <b className="text-white">{r.latencyMs}ms</b></span>
+                        )}
+                      </div>
+                      <div className="text-[11px] mt-0.5 opacity-90">
+                        {r.message}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="p-4 text-center text-xs font-mono text-neutral-500">
+                    No diagnostic run yet.
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-neutral-800">
+                <button
+                  type="button"
+                  disabled={diagLoading}
+                  onClick={handleRunDiagnosticTest}
+                  className="px-4 py-2 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-mono text-xs font-bold transition-all disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Activity size={14} />
+                  <span>Re-test Connections</span>
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
