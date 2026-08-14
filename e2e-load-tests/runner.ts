@@ -70,7 +70,7 @@ export class E2ELoadTestRunner {
     // Dynamic duration calculation
     const revealSec = 3;
     const lbSec = 3;
-    const quizLifecycleSec = 5 * (this.questionDurationSec + revealSec + lbSec);
+    const quizLifecycleSec = 10 * (this.questionDurationSec + revealSec + lbSec);
     const dynamicDurationSeconds = this.hostMode === "manual"
       ? (explicitDurationSeconds || 600) // 10 mins default for manual host operations
       : Math.max(60, this.rampUpSeconds + 15 + quizLifecycleSec);

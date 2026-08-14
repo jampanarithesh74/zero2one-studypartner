@@ -52,9 +52,42 @@ export function AdminQuizController({
   const [loading, setLoading] = useState<boolean>(true);
   const [toastMsg, setToastMsg] = useState<string>("");
   const [timeRemaining, setTimeRemaining] = useState<number>(30);
+  const [activeBroadcast, setActiveBroadcast] = useState<{ activeActivity?: string } | null>(null);
 
   const processedTimerZeroRef = useRef<boolean>(false);
   const answerRevealTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Listen to Active Broadcast for entire room
+  useEffect(() => {
+    if (!eventId) return;
+    const broadcastRef = doc(db, "events", eventId, "activities", "activeBroadcast");
+    const unsubBroadcast = onSnapshot(
+      broadcastRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          setActiveBroadcast(docSnap.data() as any);
+        } else {
+          setActiveBroadcast(null);
+        }
+      },
+      (err) => console.warn("Admin broadcast listener warning:", err)
+    );
+    return () => unsubBroadcast();
+  }, [eventId]);
+
+  const setLiveBroadcast = async (activity: "quiz" | "crossword" | "riddles" | "none") => {
+    try {
+      const broadcastRef = doc(db, "events", eventId, "activities", "activeBroadcast");
+      await setDoc(broadcastRef, {
+        activeActivity: activity,
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+      setToastMsg(`Participants Stage set to: ${activity.toUpperCase()}`);
+      setTimeout(() => setToastMsg(""), 3000);
+    } catch (err: any) {
+      console.error("Error setting broadcast:", err);
+    }
+  };
 
   // 1. Listen to Quiz Session
   useEffect(() => {
@@ -387,63 +420,105 @@ export function AdminQuizController({
       <div className="flex-1 p-5 sm:p-6 flex flex-col space-y-5 overflow-y-auto">
         {/* Activity Selection Tabs */}
         <div>
-          <h3 className="text-[11px] font-mono font-bold text-neutral-400 uppercase tracking-wider mb-2">
-            Select Activity
-          </h3>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-[11px] font-mono font-bold text-neutral-400 uppercase tracking-wider">
+              Select Activity
+            </h3>
+            {activeBroadcast?.activeActivity && activeBroadcast.activeActivity !== "none" && (
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  Live for Participants: {activeBroadcast.activeActivity.toUpperCase()}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setLiveBroadcast("none")}
+                  className="text-[10px] font-mono text-neutral-400 hover:text-red-400 underline cursor-pointer"
+                >
+                  Clear Broadcast
+                </button>
+              </div>
+            )}
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-            <button
-              type="button"
-              onClick={() => setSelectedActivity("quiz")}
-              className={`p-3 rounded-xl font-bold text-xs transition-all flex items-center justify-between cursor-pointer border ${
-                selectedActivity === "quiz" || session?.status === "running"
-                  ? "bg-orange-500/15 border-orange-500 text-orange-400 shadow-lg shadow-orange-500/10"
-                  : "bg-neutral-900 border-neutral-800 text-neutral-300 hover:bg-neutral-850"
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-base">🧠</span>
-                <span>Quiz</span>
-              </div>
-              {session?.status === "running" && (
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <div className="flex flex-col gap-1.5">
+              <button
+                type="button"
+                onClick={() => setSelectedActivity("quiz")}
+                className={`p-3 rounded-xl font-bold text-xs transition-all flex items-center justify-between cursor-pointer border ${
+                  selectedActivity === "quiz" || session?.status === "running"
+                    ? "bg-orange-500/15 border-orange-500 text-orange-400 shadow-lg shadow-orange-500/10"
+                    : "bg-neutral-900 border-neutral-800 text-neutral-300 hover:bg-neutral-850"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-base">🧠</span>
+                  <span>Quiz</span>
+                </div>
+                {session?.status === "running" && (
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                )}
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <button
+                type="button"
+                onClick={() => setSelectedActivity("crossword")}
+                className={`p-3 rounded-xl font-bold text-xs transition-all flex items-center justify-between cursor-pointer border ${
+                  selectedActivity === "crossword"
+                    ? "bg-orange-500/15 border-orange-500 text-orange-400 shadow-lg shadow-orange-500/10"
+                    : "bg-neutral-900 border-neutral-800 text-neutral-300 hover:bg-neutral-850"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-base">🧩</span>
+                  <span>Crossword</span>
+                </div>
+                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-orange-400 font-bold">
+                  2 Puzzles
+                </span>
+              </button>
+              {selectedActivity === "crossword" && (
+                <button
+                  type="button"
+                  onClick={() => setLiveBroadcast("crossword")}
+                  className="py-1 px-2 rounded-lg bg-orange-500/10 border border-orange-500/30 text-orange-400 text-[10px] font-mono font-bold hover:bg-orange-500/20 cursor-pointer flex items-center justify-center gap-1"
+                >
+                  Broadcast Crosswords Live
+                </button>
               )}
-            </button>
+            </div>
 
-            <button
-              type="button"
-              onClick={() => setSelectedActivity("crossword")}
-              className={`p-3 rounded-xl font-bold text-xs transition-all flex items-center justify-between cursor-pointer border ${
-                selectedActivity === "crossword"
-                  ? "bg-orange-500/15 border-orange-500 text-orange-400 shadow-lg shadow-orange-500/10"
-                  : "bg-neutral-900 border-neutral-800 text-neutral-300 hover:bg-neutral-850"
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-base">🧩</span>
-                <span>Crossword</span>
-              </div>
-              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-orange-400 font-bold">
-                2 Puzzles
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setSelectedActivity("riddles")}
-              className={`p-3 rounded-xl font-bold text-xs transition-all flex items-center justify-between cursor-pointer border ${
-                selectedActivity === "riddles"
-                  ? "bg-orange-500/15 border-orange-500 text-orange-400 shadow-lg shadow-orange-500/10"
-                  : "bg-neutral-900 border-neutral-800 text-neutral-300 hover:bg-neutral-850"
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-base">❓</span>
-                <span>Riddles</span>
-              </div>
-              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-orange-400 font-bold">
-                5 Riddles
-              </span>
-            </button>
+            <div className="flex flex-col gap-1.5">
+              <button
+                type="button"
+                onClick={() => setSelectedActivity("riddles")}
+                className={`p-3 rounded-xl font-bold text-xs transition-all flex items-center justify-between cursor-pointer border ${
+                  selectedActivity === "riddles"
+                    ? "bg-orange-500/15 border-orange-500 text-orange-400 shadow-lg shadow-orange-500/10"
+                    : "bg-neutral-900 border-neutral-800 text-neutral-300 hover:bg-neutral-850"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-base">❓</span>
+                  <span>Riddles</span>
+                </div>
+                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-orange-400 font-bold">
+                  5 Riddles
+                </span>
+              </button>
+              {selectedActivity === "riddles" && (
+                <button
+                  type="button"
+                  onClick={() => setLiveBroadcast("riddles")}
+                  className="py-1 px-2 rounded-lg bg-orange-500/10 border border-orange-500/30 text-orange-400 text-[10px] font-mono font-bold hover:bg-orange-500/20 cursor-pointer flex items-center justify-center gap-1"
+                >
+                  Broadcast Riddles Live
+                </button>
+              )}
+            </div>
           </div>
         </div>
 

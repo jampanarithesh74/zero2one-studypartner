@@ -26,14 +26,16 @@ export class E2EQuizSessionDriver {
     this.running = true;
     const sessionRef = doc(this.db, "events", this.eventId, "activities", "quiz", "session", "current");
 
-    console.log(`\n🏎️ [E2E SessionDriver] Driving 5-question Quiz lifecycle for event: ${this.eventId}`);
+    console.log(`\n🏎️ [E2E SessionDriver] Driving 10-question Quiz lifecycle for event: ${this.eventId}`);
     console.log(`   [Config] Question Duration: ${this.questionDurationSec}s | Reveal: ${this.revealDurationSec}s | Leaderboard: ${this.leaderboardDurationSec}s`);
 
-    for (let qIndex = 0; qIndex < 5; qIndex++) {
+    const TOTAL_QUIZ_QUESTIONS = 10;
+
+    for (let qIndex = 0; qIndex < TOTAL_QUIZ_QUESTIONS; qIndex++) {
       if (!this.running) break;
 
       // 1. QUESTION STAGE
-      console.log(`   [SessionDriver] Moving to Question ${qIndex + 1} / 5 (Stage: "question")`);
+      console.log(`   [SessionDriver] Moving to Question ${qIndex + 1} / ${TOTAL_QUIZ_QUESTIONS} (Stage: "question")`);
       await setDoc(sessionRef, {
         stage: "question",
         currentQuestionIndex: qIndex,
@@ -70,7 +72,7 @@ export class E2EQuizSessionDriver {
       console.log(`\n🏁 [SessionDriver] Quiz finished -> Stage: "completed"`);
       await setDoc(sessionRef, {
         stage: "completed",
-        currentQuestionIndex: 4,
+        currentQuestionIndex: 9,
         updatedAt: serverTimestamp()
       }, { merge: true });
     }

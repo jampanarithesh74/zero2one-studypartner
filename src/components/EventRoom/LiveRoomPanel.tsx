@@ -26,6 +26,8 @@ import { EventItem } from "../PublicEventPage";
 import { Participant } from "../ParticipantOnboarding";
 import { QuizModeCard } from "../events/QuizModeCard";
 import { QuizSessionData } from "../../data/quizQuestions";
+import { CrosswordActivityView } from "../events/CrosswordActivityView";
+import { RiddleActivityView } from "../events/RiddleActivityView";
 
 export interface ActiveQuestionData {
   question: string;
@@ -59,8 +61,27 @@ export function LiveRoomPanel({
 }: LiveRoomPanelProps) {
   const [activeQuestion, setActiveQuestion] = useState<ActiveQuestionData | null>(null);
   const [quizSession, setQuizSession] = useState<QuizSessionData | null>(null);
+  const [activeBroadcast, setActiveBroadcast] = useState<{ activeActivity?: "quiz" | "crossword" | "riddles" | "none" } | null>(null);
   const [answers, setAnswers] = useState<LiveAnswerData[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+
+  // Listen to Active Broadcast for entire room
+  useEffect(() => {
+    if (!event.id) return;
+    const broadcastRef = doc(db, "events", event.id, "activities", "activeBroadcast");
+    const unsubBroadcast = onSnapshot(
+      broadcastRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          setActiveBroadcast(docSnap.data() as any);
+        } else {
+          setActiveBroadcast(null);
+        }
+      },
+      (err) => console.warn("Broadcast listener warning:", err)
+    );
+    return () => unsubBroadcast();
+  }, [event.id]);
 
   // Listen to Quiz Session in Firestore
   useEffect(() => {
@@ -216,6 +237,22 @@ export function LiveRoomPanel({
     return <QuizModeCard eventId={event.id} currentParticipant={currentParticipant} quizSession={quizSession} />;
   }
 
+  if (activeBroadcast?.activeActivity === "crossword") {
+    return (
+      <div className="h-full flex flex-col">
+        <CrosswordActivityView eventId={event.id} currentParticipant={currentParticipant as any} isAdmin={false} />
+      </div>
+    );
+  }
+
+  if (activeBroadcast?.activeActivity === "riddles") {
+    return (
+      <div className="h-full flex flex-col">
+        <RiddleActivityView eventId={event.id} currentParticipant={currentParticipant as any} isAdmin={false} />
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-full bg-[#121212] border border-neutral-800/90 rounded-2xl overflow-hidden shadow-xl text-left font-sans">
       {/* Panel Header */}
@@ -311,34 +348,37 @@ export function LiveRoomPanel({
               </div>
             </motion.div>
           ) : (
-            /* NO ACTIVE QUESTION PLACEHOLDER */
+            /* NO ACTIVE QUESTION / GET READY AUDITORIUM STATE */
             <motion.div
-              key="no-question"
-              initial={{ opacity: 0, scale: 0.98 }}
+              key="get-ready-standby"
+              initial={{ opacity: 0, scale: 0.99 }}
               animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.98 }}
+              exit={{ opacity: 0, scale: 0.99 }}
               transition={{ duration: 0.3 }}
-              className="flex-1 min-h-[220px] rounded-2xl bg-neutral-950 border border-neutral-800/80 p-6 flex flex-col items-center justify-center text-center space-y-4 relative overflow-hidden group"
+              className="flex-1 min-h-[260px] rounded-2xl bg-neutral-950/80 border border-neutral-800/80 p-8 flex flex-col items-center justify-center text-center space-y-5 relative overflow-hidden"
             >
-              <div className="absolute inset-0 bg-gradient-to-br from-orange-500/5 via-transparent to-purple-500/5 pointer-events-none" />
+              {/* Subtle Ambient Radial Lighting */}
+              <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-orange-500/5 via-neutral-950/40 to-transparent pointer-events-none" />
 
-              <div className="w-12 h-12 rounded-2xl bg-orange-500/10 border border-orange-500/20 text-orange-500 flex items-center justify-center shadow-lg relative z-10">
-                <HelpCircle size={24} />
-              </div>
+              <div className="space-y-2 relative z-10">
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-[10px] font-mono font-black uppercase tracking-widest text-orange-400 bg-orange-500/10 border border-orange-500/25">
+                  <span className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-pulse" />
+                  <span>Main Stage Standby</span>
+                </div>
 
-              <div className="space-y-1.5 max-w-sm relative z-10">
-                <h3 className="text-base sm:text-lg font-black text-white tracking-tight">
-                  Live Event Area
+                <h3 className="text-2xl sm:text-3xl font-black text-white tracking-tight uppercase">
+                  GET READY
                 </h3>
-                <p className="text-xs text-neutral-400 font-medium leading-relaxed">
-                  Future live questions will appear here.
+
+                <p className="text-xs text-neutral-400 font-medium max-w-sm mx-auto leading-relaxed">
+                  The host will broadcast the live activity shortly. Answers will unlock directly on this screen.
                 </p>
               </div>
 
-              <div className="pt-2 relative z-10">
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-mono font-bold text-neutral-400 bg-neutral-900 border border-neutral-800">
-                  <Clock size={11} className="text-orange-400" />
-                  Waiting for host to publish a question...
+              <div className="pt-1 relative z-10">
+                <span className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-[11px] font-mono font-bold text-neutral-400 bg-neutral-900/90 border border-neutral-800 shadow-inner">
+                  <Clock size={13} className="text-orange-400" />
+                  <span>Awaiting Host Broadcast...</span>
                 </span>
               </div>
             </motion.div>
