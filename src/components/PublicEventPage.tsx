@@ -31,6 +31,7 @@ export interface EventItem {
   status: "active" | "upcoming" | "completed";
   eventType: "public" | "internal";
   roomType?: "linkedin" | "normal";
+  participantCount?: number;
   createdBy: string;
   createdAt?: any;
   updatedAt?: any;

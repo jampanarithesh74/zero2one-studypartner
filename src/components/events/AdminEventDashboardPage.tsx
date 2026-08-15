@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { doc, collection, onSnapshot } from "firebase/firestore";
+import { doc, collection, onSnapshot, getCountFromServer } from "firebase/firestore";
 import { 
   Loader2, 
   AlertCircle, 
@@ -15,8 +15,6 @@ import {
 } from "lucide-react";
 import { db } from "../../lib/firebase";
 import { EventItem } from "../PublicEventPage";
-import { Participant } from "../ParticipantOnboarding";
-import { ParticipantsPanel } from "../EventRoom/ParticipantsPanel";
 import { AdminLiveControlsPanel } from "../EventRoom/AdminLiveControlsPanel";
 import { ChatPanel } from "../EventRoom/ChatPanel";
 import { AskQuestionModal } from "../EventRoom/AskQuestionModal";
@@ -36,18 +34,14 @@ export function AdminEventDashboardPage({
   const navigate = useNavigate();
 
   const [event, setEvent] = useState<EventItem | null>(null);
-  const [participants, setParticipants] = useState<(Participant & { id: string })[]>([]);
+  const [totalParticipants, setTotalParticipants] = useState<number>(0);
   const [loading, setLoading] = useState<boolean>(true);
   const [errorMsg, setErrorMsg] = useState<string>("");
-
-  // Search and filter state for Members list
-  const [searchQuery, setSearchQuery] = useState<string>("");
-  const [selectedDept, setSelectedDept] = useState<string>("ALL");
 
   // UI Modals & Navigation
   const [isAskModalOpen, setIsAskModalOpen] = useState<boolean>(false);
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<"members" | "controls" | "chat">("controls");
+  const [activeTab, setActiveTab] = useState<"controls" | "chat">("controls");
 
   // Security Check: If not an admin, redirect immediately to participant room
   useEffect(() => {
@@ -61,7 +55,7 @@ export function AdminEventDashboardPage({
     }
   }, [isAdmin, eventId, navigate]);
 
-  // Real-time Event metadata listener
+  // Real-time Event metadata listener (single document read)
   useEffect(() => {
     if (!eventId || !isAdmin) return;
 
@@ -72,7 +66,11 @@ export function AdminEventDashboardPage({
       eventRef,
       (docSnap) => {
         if (docSnap.exists()) {
-          setEvent({ id: docSnap.id, ...docSnap.data() } as EventItem);
+          const data = docSnap.data() as EventItem;
+          setEvent({ id: docSnap.id, ...data });
+          if (data.participantCount !== undefined) {
+            setTotalParticipants(data.participantCount);
+          }
           setErrorMsg("");
         } else {
           setErrorMsg("Event not found in Firestore.");
@@ -89,28 +87,31 @@ export function AdminEventDashboardPage({
     return () => unsubEvent();
   }, [eventId, isAdmin]);
 
-  // Real-time Participants listener
+  // Fetch initial aggregate count without reading individual participant documents
   useEffect(() => {
     if (!eventId || !isAdmin) return;
 
-    const participantsRef = collection(db, "events", eventId, "participants");
+    let isMounted = true;
 
-    const unsubParticipants = onSnapshot(
-      participantsRef,
-      (snapshot) => {
-        const list: (Participant & { id: string })[] = [];
-        snapshot.forEach((docSnap) => {
-          list.push({ id: docSnap.id, ...docSnap.data() } as Participant & { id: string });
-        });
-        setParticipants(list);
-      },
-      (err) => {
-        console.error("Error listening to event participants:", err);
+    async function fetchAggregateCount() {
+      try {
+        const participantsCol = collection(db, "events", eventId, "participants");
+        const countSnap = await getCountFromServer(participantsCol);
+        if (isMounted) {
+          const count = countSnap.data().count;
+          setTotalParticipants((prev) => (event?.participantCount !== undefined ? event.participantCount : count));
+        }
+      } catch (err) {
+        console.warn("Aggregate participant count warning:", err);
       }
-    );
+    }
 
-    return () => unsubParticipants();
-  }, [eventId, isAdmin]);
+    fetchAggregateCount();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [eventId, isAdmin, event?.participantCount]);
 
   // Handle Copy Share Link
   const handleCopyLink = () => {
@@ -121,25 +122,7 @@ export function AdminEventDashboardPage({
     setTimeout(() => setCopiedLink(false), 2000);
   };
 
-  // Filtered participants list logic
-  const availableDepts: string[] = [
-    "ALL",
-    ...Array.from(new Set<string>(participants.map((p) => p.department).filter((d): d is string => Boolean(d)))),
-  ];
-
-  const filteredParticipants = participants.filter((p) => {
-    const query = searchQuery.trim().toLowerCase();
-    const matchesSearch =
-      !query ||
-      p.name?.toLowerCase().includes(query) ||
-      p.college?.toLowerCase().includes(query) ||
-      p.department?.toLowerCase().includes(query) ||
-      p.year?.toLowerCase().includes(query);
-
-    const matchesDept = selectedDept === "ALL" || p.department === selectedDept;
-
-    return matchesSearch && matchesDept;
-  });
+  const participantCount = event?.participantCount ?? totalParticipants;
 
   if (!isAdmin) {
     return null; // Redirecting in useEffect
@@ -208,7 +191,10 @@ export function AdminEventDashboardPage({
             <p className="text-[11px] font-mono text-neutral-400 truncate mt-0.5 flex items-center gap-2">
               <span>{event.college || "Campus Event"}</span>
               <span>•</span>
-              <span className="text-orange-400 font-bold">{participants.length} Active Members</span>
+              <span className="text-orange-400 font-bold flex items-center gap-1">
+                <Users size={12} className="text-orange-400" />
+                {participantCount} Active {participantCount === 1 ? "Participant" : "Participants"}
+              </span>
             </p>
           </div>
         </div>
@@ -246,60 +232,30 @@ export function AdminEventDashboardPage({
         </div>
       </header>
 
-      {/* Main Admin Three-Panel Container */}
+      {/* Main Admin Content Container - Two Panels (No Unnecessary Participant List Listener) */}
       <main className="flex-1 p-3 sm:p-4 md:p-6 overflow-hidden flex flex-col">
-        {/* Desktop 3-Column Grid */}
-        <div className="hidden lg:grid lg:grid-cols-12 gap-4 flex-1 h-[calc(100vh-120px)]">
-          {/* Left Panel: Real-time Members List (25% = col-span-3) */}
-          <div className="lg:col-span-3 h-full">
-            <ParticipantsPanel
-              event={event}
-              participants={participants}
-              filteredParticipants={filteredParticipants}
-              currentParticipant={null}
-              searchQuery={searchQuery}
-              setSearchQuery={setSearchQuery}
-              selectedDept={selectedDept}
-              setSelectedDept={setSelectedDept}
-              availableDepts={availableDepts}
-              showConnect={false}
-              title="Members"
-            />
-          </div>
-
-          {/* Center Panel: Live Room Controls (50% = col-span-6) */}
-          <div className="lg:col-span-6 h-full">
+        {/* Desktop 2-Column Grid: Stage / Activity Controls (65%) + Live Chat (35%) */}
+        <div className="hidden lg:grid lg:grid-cols-12 gap-5 flex-1 h-[calc(100vh-120px)]">
+          {/* Main Stage & Activity Controls Panel (col-span-8) */}
+          <div className="lg:col-span-8 h-full">
             <AdminLiveControlsPanel
               event={event}
               onOpenAskModal={() => setIsAskModalOpen(true)}
               onNavigateLiveWall={() => navigate(`/events/${event.id}/live-wall`)}
-              participantCount={participants.length}
+              participantCount={participantCount}
             />
           </div>
 
-          {/* Right Panel: Chat Panel Placeholder (25% = col-span-3) */}
-          <div className="lg:col-span-3 h-full">
+          {/* Right Panel: Chat Panel (col-span-4) */}
+          <div className="lg:col-span-4 h-full">
             <ChatPanel event={event} />
           </div>
         </div>
 
-        {/* Mobile View with Bottom/Top Tab Switcher */}
+        {/* Mobile View with Controls / Chat Tab Switcher */}
         <div className="lg:hidden flex flex-col flex-1 h-full space-y-3">
           {/* Mobile Tab Selectors */}
           <div className="flex items-center p-1 bg-neutral-900 rounded-xl border border-neutral-800 shrink-0">
-            <button
-              type="button"
-              onClick={() => setActiveTab("members")}
-              className={`flex-1 py-2 text-xs font-extrabold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                activeTab === "members"
-                  ? "bg-orange-500 text-white shadow-md"
-                  : "text-neutral-400 hover:text-white"
-              }`}
-            >
-              <Users size={14} />
-              <span>Members ({participants.length})</span>
-            </button>
-
             <button
               type="button"
               onClick={() => setActiveTab("controls")}
@@ -329,28 +285,12 @@ export function AdminEventDashboardPage({
 
           {/* Mobile Tab Active Panel */}
           <div className="flex-1 min-h-[500px]">
-            {activeTab === "members" && (
-              <ParticipantsPanel
-                event={event}
-                participants={participants}
-                filteredParticipants={filteredParticipants}
-                currentParticipant={null}
-                searchQuery={searchQuery}
-                setSearchQuery={setSearchQuery}
-                selectedDept={selectedDept}
-                setSelectedDept={setSelectedDept}
-                availableDepts={availableDepts}
-                showConnect={false}
-                title="Members"
-              />
-            )}
-
             {activeTab === "controls" && (
               <AdminLiveControlsPanel
                 event={event}
                 onOpenAskModal={() => setIsAskModalOpen(true)}
                 onNavigateLiveWall={() => navigate(`/events/${event.id}/live-wall`)}
-                participantCount={participants.length}
+                participantCount={participantCount}
               />
             )}
 

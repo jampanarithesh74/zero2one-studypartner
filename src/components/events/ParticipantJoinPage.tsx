@@ -14,7 +14,7 @@ import {
   Clock, 
   Globe 
 } from "lucide-react";
-import { doc, getDoc, collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc, collection, addDoc, updateDoc, increment, serverTimestamp } from "firebase/firestore";
 import { db } from "../../lib/firebase";
 import { EventItem } from "../PublicEventPage";
 import { extractLinkedinUsername } from "../ParticipantOnboarding";
@@ -259,6 +259,15 @@ export function ParticipantJoinPage() {
         joinedAt: serverTimestamp(),
         lastSeen: serverTimestamp(),
       });
+
+      // Atomically update participant count on the event document
+      try {
+        await updateDoc(doc(db, "events", eventId), {
+          participantCount: increment(1),
+        });
+      } catch (countErr) {
+        console.warn("Could not update participantCount on event:", countErr);
+      }
 
       const participantData = {
         id: docRef.id,

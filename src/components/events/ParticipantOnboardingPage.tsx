@@ -23,6 +23,7 @@ import {
   where, 
   limit, 
   updateDoc, 
+  increment,
   serverTimestamp 
 } from "firebase/firestore";
 import { db } from "../../lib/firebase";
@@ -255,6 +256,15 @@ export function ParticipantOnboardingPage() {
           id: docRef.id,
           ...newParticipantData,
         };
+
+        // Atomically update participant count on event document
+        try {
+          await updateDoc(doc(db, "events", eventId), {
+            participantCount: increment(1),
+          });
+        } catch (countErr) {
+          console.warn("Could not update participantCount on event:", countErr);
+        }
       }
 
       // Persist participant session in localStorage

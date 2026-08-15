@@ -13,6 +13,7 @@ import { doc, collection, onSnapshot, setDoc, serverTimestamp, query, orderBy, l
 import { db } from "../../lib/firebase";
 import { Participant } from "../ParticipantOnboarding";
 import { QuizSessionData, QuizLeaderboardEntry } from "../../data/quizQuestions";
+import { QuizService } from "../../services/activityService";
 import { QuizLeaderboardView } from "./QuizLeaderboardView";
 
 interface QuizModeCardProps {
@@ -186,41 +187,26 @@ export function QuizModeCard({ eventId, currentParticipant, quizSession: passedQ
     return () => clearInterval(timer);
   }, [isTimesUp, isSubmitted]);
 
-  // Save Option Selection to Firestore
+  // Save Option Selection to Firestore & Update Quiz Leaderboard
   const handleOptionSelect = async (optionIdx: number, forceAutoSubmit = false) => {
     if (isSubmitted && !forceAutoSubmit) return;
-    if (session?.status !== "running") return;
+    if (session?.status !== "running" || session?.currentQuestionIndex === undefined) return;
 
     setSelectedOption(optionIdx);
     setIsSubmitted(true);
 
     try {
-      const responseRef = doc(
-        db,
-        "events",
+      await QuizService.submitAnswer(
         eventId,
-        "activities",
-        "quiz",
-        "responses",
-        participantId
-      );
-
-      const qKey = `question${session.currentQuestionIndex}`;
-      const submittedTime = Date.now();
-
-      await setDoc(
-        responseRef,
-        {
-          participantId,
-          participantName: currentParticipant?.name || "Participant",
-          [qKey]: optionIdx,
-          [`${qKey}_submittedAt`]: submittedTime,
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true }
+        participantId,
+        currentParticipant?.name || "Participant",
+        currentParticipant?.photo || undefined,
+        session.currentQuestionIndex,
+        optionIdx,
+        timeRemaining
       );
     } catch (err) {
-      console.error("Error saving quiz response:", err);
+      console.error("Error submitting quiz answer:", err);
     }
   };
 

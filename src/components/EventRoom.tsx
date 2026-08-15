@@ -30,53 +30,15 @@ export function EventRoom({
   const [selectedDept, setSelectedDept] = useState<string>("All");
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
 
-  // Subscribe to real-time participants subcollection ONLY if admin
+  // Keep lightweight participant state without listening to full collection
   useEffect(() => {
-    if (!isAdmin) {
+    if (currentParticipant) {
       setParticipants([currentParticipant]);
-      setLoading(false);
-      return;
+    } else {
+      setParticipants([]);
     }
-
-    setLoading(true);
-    const participantsRef = collection(db, "events", event.id, "participants");
-    const q = query(participantsRef, orderBy("joinedAt", "desc"), limit(100));
-
-    let activeUnsub: (() => void) | null = null;
-
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const list: (Participant & { id: string })[] = [];
-        snapshot.forEach((doc) => {
-          list.push({ id: doc.id, ...doc.data() } as Participant & { id: string });
-        });
-        setParticipants(list);
-        setLoading(false);
-      },
-      (error) => {
-        console.warn("Ordered participants query error, falling back:", error);
-        const fallbackUnsub = onSnapshot(
-          query(collection(db, "events", event.id, "participants"), limit(100)),
-          (snapshot) => {
-            const list: (Participant & { id: string })[] = [];
-            snapshot.forEach((doc) => {
-              list.push({ id: doc.id, ...doc.data() } as Participant & { id: string });
-            });
-            setParticipants(list);
-            setLoading(false);
-          }
-        );
-        activeUnsub = fallbackUnsub;
-      }
-    );
-
-    activeUnsub = unsubscribe;
-
-    return () => {
-      if (activeUnsub) activeUnsub();
-    };
-  }, [event.id, isAdmin, currentParticipant]);
+    setLoading(false);
+  }, [currentParticipant]);
 
   // Extract unique departments dynamically from real participant list
   const availableDepts = useMemo(() => {

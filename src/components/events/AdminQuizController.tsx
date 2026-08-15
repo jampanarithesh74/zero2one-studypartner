@@ -43,7 +43,8 @@ import {
   BroadcastService, 
   ActiveBroadcastData, 
   CrosswordService, 
-  RiddleService 
+  RiddleService,
+  QuizService
 } from "../../services/activityService";
 import { QuizLeaderboardView } from "./QuizLeaderboardView";
 import { CrosswordActivityView } from "./CrosswordActivityView";
@@ -435,6 +436,18 @@ export function AdminQuizController({
       setTimeout(() => setToastMsg(""), 3000);
     } catch (err: any) {
       console.error("Error ending quiz:", err);
+    }
+  };
+
+  const handleResetQuizLeaderboard = async () => {
+    if (!eventId) return;
+    try {
+      await QuizService.resetLeaderboard(eventId);
+      setLeaderboard([]);
+      setToastMsg("Quiz leaderboard & scores reset successfully.");
+      setTimeout(() => setToastMsg(""), 3000);
+    } catch (err: any) {
+      console.error("Error resetting quiz leaderboard:", err);
     }
   };
 
@@ -1137,14 +1150,26 @@ export function AdminQuizController({
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={handleStartQuiz}
-                className="w-full py-3 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white font-black text-sm tracking-wide transition-all shadow-xl shadow-orange-500/20 cursor-pointer flex items-center justify-center gap-2 border border-orange-400/40"
-              >
-                <Play size={16} className="fill-white" />
-                <span>Start Quiz</span>
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={handleResetQuizLeaderboard}
+                  className="px-4 py-3 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-400 hover:text-red-400 font-bold text-xs transition-all border border-neutral-800 cursor-pointer flex items-center justify-center gap-1.5"
+                  title="Clear quiz responses and leaderboard"
+                >
+                  <RotateCcw size={14} />
+                  <span>Reset Scores</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleStartQuiz}
+                  className="flex-1 py-3 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white font-black text-sm tracking-wide transition-all shadow-xl shadow-orange-500/20 cursor-pointer flex items-center justify-center gap-2 border border-orange-400/40"
+                >
+                  <Play size={16} className="fill-white" />
+                  <span>Start Quiz</span>
+                </button>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
