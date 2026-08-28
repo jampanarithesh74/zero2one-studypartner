@@ -16,7 +16,14 @@ import { PDFViewer } from "./components/PDFViewer";
 import { ToolsModule } from "./components/ToolsModule";
 import { EventsModule } from "./components/EventsModule";
 import { PublicEventPage } from "./components/PublicEventPage";
+import { EventsLandingPage } from "./components/events/EventsLandingPage";
+import { EventsJoinPage } from "./components/events/EventsJoinPage";
+import { EventsJoinPlaceholderPage } from "./components/events/EventsJoinPlaceholderPage";
+import { EventsHostLoginPage } from "./components/events/EventsHostLoginPage";
+import { EventsHostDashboardPage } from "./components/events/EventsHostDashboardPage";
+import { EventsHostPlaceholderPage } from "./components/events/EventsHostPlaceholderPage";
 import { EventsListingPage } from "./components/events/EventsListingPage";
+import { EventWaitingRoomPage } from "./components/events/EventWaitingRoomPage";
 import { ParticipantJoinPage } from "./components/events/ParticipantJoinPage";
 import { ParticipantOnboardingPage } from "./components/events/ParticipantOnboardingPage";
 import { EventRoomPage } from "./components/events/EventRoomPage";
@@ -3078,7 +3085,7 @@ export default function App() {
   };
 
   const renderMobileBottomNav = () => {
-    if (!user || !userProfile) return null;
+    if (!user || !userProfile || location.pathname.startsWith("/events")) return null;
 
     return (
       <div className="fixed bottom-0 left-0 right-0 z-[40] bg-neutral-950/90 backdrop-blur-md border-t border-neutral-900/85 p-2 py-3 px-4 flex justify-around items-center md:hidden select-none">
@@ -5563,9 +5570,17 @@ export default function App() {
             )}
             {location.pathname.startsWith("/events") && (
               <Routes>
-                <Route path="/events" element={<EventsListingPage currentUserEmail={user?.email} currentUserId={user?.uid} isAdmin={isAdmin} />} />
+                {/* Events Landing & Action Routes */}
+                <Route path="/events" element={<EventsLandingPage />} />
+                <Route path="/events/join" element={<EventsJoinPage />} />
+                <Route path="/events/host" element={<EventsHostLoginPage />} />
+                <Route path="/events/host/dashboard" element={<EventsHostDashboardPage />} />
+                <Route path="/events/list" element={<EventsListingPage currentUserEmail={user?.email} currentUserId={user?.uid} isAdmin={isAdmin} />} />
+                
+                {/* Event Participant & Room Routes */}
                 <Route path="/events/:eventId" element={<PublicEventPage onNavigateHome={() => navigate("/events")} />} />
                 <Route path="/events/:eventId/join" element={<ParticipantJoinPage />} />
+                <Route path="/events/:eventId/waiting" element={<EventWaitingRoomPage />} />
                 <Route path="/events/:eventId/onboarding" element={<ParticipantOnboardingPage />} />
                 <Route path="/events/:eventId/room" element={<EventRoomPage currentUserEmail={user?.email} currentUserId={user?.uid} isAdmin={isAdmin} />} />
                 <Route path="/events/:eventId/admin" element={isAdmin ? <AdminEventDashboardPage currentUserEmail={user?.email} currentUserId={user?.uid} isAdmin={isAdmin} /> : <UnauthorizedAdminPage />} />

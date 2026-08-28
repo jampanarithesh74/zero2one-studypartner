@@ -148,6 +148,23 @@
         "participantName": { "type": "string" }
       },
       "required": ["participantId", "participantName"]
+    },
+    "Participant": {
+      "title": "Participant",
+      "description": "Participant profile record inside an event room and waiting room",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "eventId": { "type": "string" },
+        "name": { "type": "string" },
+        "college": { "type": "string" },
+        "department": { "type": "string" },
+        "year": { "type": "string" },
+        "online": { "type": "boolean" },
+        "roomType": { "type": "string" },
+        "joinedAt": { "type": "string" }
+      },
+      "required": ["id", "name", "online"]
     }
   },
   "firestore": {
@@ -174,6 +191,10 @@
     "notifications/{notificationId}": {
       "schema": "Notification",
       "description": "Global platforms updates and admin-published notifications"
+    },
+    "events/{eventId}/participants/{participantId}": {
+      "schema": "Participant",
+      "description": "Registered participants in an event room or waiting room"
     },
     "events/{eventId}/liveRoom/activeQuestion": {
       "schema": "ActiveQuestion",
