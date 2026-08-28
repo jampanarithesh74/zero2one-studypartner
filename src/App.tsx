@@ -21,6 +21,7 @@ import { EventsJoinPage } from "./components/events/EventsJoinPage";
 import { EventsJoinPlaceholderPage } from "./components/events/EventsJoinPlaceholderPage";
 import { EventsHostLoginPage } from "./components/events/EventsHostLoginPage";
 import { EventsHostDashboardPage } from "./components/events/EventsHostDashboardPage";
+import { EventsHostEventSetupPage } from "./components/events/EventsHostEventSetupPage";
 import { EventsHostPlaceholderPage } from "./components/events/EventsHostPlaceholderPage";
 import { EventsListingPage } from "./components/events/EventsListingPage";
 import { EventWaitingRoomPage } from "./components/events/EventWaitingRoomPage";
@@ -5575,6 +5576,7 @@ export default function App() {
                 <Route path="/events/join" element={<EventsJoinPage />} />
                 <Route path="/events/host" element={<EventsHostLoginPage />} />
                 <Route path="/events/host/dashboard" element={<EventsHostDashboardPage />} />
+                <Route path="/events/host/events/:eventId/setup" element={<EventsHostEventSetupPage />} />
                 <Route path="/events/list" element={<EventsListingPage currentUserEmail={user?.email} currentUserId={user?.uid} isAdmin={isAdmin} />} />
                 
                 {/* Event Participant & Room Routes */}

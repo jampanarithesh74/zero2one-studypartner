@@ -165,9 +165,42 @@
         "joinedAt": { "type": "string" }
       },
       "required": ["id", "name", "online"]
+    },
+    "Event": {
+      "title": "Event",
+      "description": "College interactive event document",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "eventId": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "eventCode": { "type": "string" },
+        "code": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "date": { "type": "string" },
+        "time": { "type": "string" },
+        "startDate": { "type": "string" },
+        "endDate": { "type": "string" },
+        "status": { "type": "string", "enum": ["draft", "active", "upcoming", "completed"] },
+        "acceptingParticipants": { "type": "boolean" },
+        "venue": { "type": "string" },
+        "banner": { "type": "string" },
+        "eventType": { "type": "string" },
+        "roomType": { "type": "string" },
+        "participantCount": { "type": "number" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "eventId", "title", "eventCode", "ownerId", "status", "acceptingParticipants"]
     }
   },
   "firestore": {
+    "events/{eventId}": {
+      "schema": "Event",
+      "description": "College interactive events"
+    },
     "admins/{uid}": {
       "schema": "Admin",
       "description": "Platform administrators"

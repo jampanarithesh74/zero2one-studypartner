@@ -145,7 +145,17 @@ service cloud.firestore {
 
     match /events/{eventId} {
       allow read, list: if true; // Public access to published events
-      allow create, update, delete: if isAdmin();
+      allow create: if isSignedIn() && (
+        isAdmin() || 
+        (incoming().ownerId == request.auth.uid && (
+          (request.auth.token.email != null && request.auth.token.email.matches('.*@anurag\\.edu\\.in$')) ||
+          isBootstrappableAdmin()
+        ))
+      );
+      allow update, delete: if isSignedIn() && (
+        isAdmin() || 
+        (resource.data.ownerId == request.auth.uid)
+      );
 
       match /participants/{participantId} {
         allow read, list: if true;
