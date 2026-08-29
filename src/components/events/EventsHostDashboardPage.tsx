@@ -35,7 +35,10 @@ import {
   ExternalLink,
   Layers,
   RotateCw,
-  FolderOpen
+  FolderOpen,
+  Send,
+  CheckCircle2,
+  Play
 } from "lucide-react";
 import { auth, db, ALLOWED_ADMIN_EMAILS } from "../../lib/firebase";
 import { generateUniqueEventCode } from "../../lib/eventCodeService";
@@ -498,17 +501,81 @@ export function EventsHostDashboardPage() {
             )}
           </div>
 
-          {/* Card Action */}
-          {isDraft && (
-            <button
-              type="button"
-              onClick={() => navigate(`/events/host/events/${ev.id}/setup`)}
-              className="px-4 py-2 rounded-xl bg-orange-500 hover:bg-orange-600 active:scale-[0.98] text-white font-bold text-xs uppercase tracking-wider transition-all duration-200 cursor-pointer flex items-center gap-1.5 shadow-md shadow-orange-500/10 ml-auto"
-            >
-              <span>CONTINUE SETUP</span>
-              <ArrowRight size={13} />
-            </button>
-          )}
+          {/* Card Actions */}
+          <div className="flex items-center gap-2 flex-wrap ml-auto">
+            {isDraft ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => navigate(`/events/host/events/${ev.id}/setup`)}
+                  className="px-3.5 py-2 rounded-xl bg-neutral-850 hover:bg-neutral-800 text-neutral-300 hover:text-white border border-neutral-750 font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5"
+                  title="Configure Room Setup"
+                >
+                  <Settings size={13} />
+                  <span>Setup</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => navigate(`/events/host/events/${ev.id}/activities`)}
+                  className="px-3.5 py-2 rounded-xl bg-neutral-850 hover:bg-neutral-800 text-neutral-300 hover:text-white border border-neutral-750 font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5"
+                  title="Configure Activities Sequence"
+                >
+                  <Layers size={13} />
+                  <span>Activities</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => navigate(`/events/host/events/${ev.id}/publish`)}
+                  className="px-4 py-2 rounded-xl bg-orange-500 hover:bg-orange-600 active:scale-[0.98] text-white font-bold text-xs uppercase tracking-wider transition-all duration-200 cursor-pointer flex items-center gap-1.5 shadow-md shadow-orange-500/10"
+                  title="Pre-flight validation & publish event"
+                >
+                  <Send size={13} />
+                  <span>Pre-flight &amp; Publish</span>
+                  <ArrowRight size={13} />
+                </button>
+              </>
+            ) : ev.status === "published" ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => navigate(`/events/host/events/${ev.id}/activities`)}
+                  className="px-3.5 py-2 rounded-xl bg-neutral-850 hover:bg-neutral-800 text-neutral-300 hover:text-white border border-neutral-750 font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <Layers size={13} />
+                  <span>Activities</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => navigate(`/events/host/events/${ev.id}/publish`)}
+                  className="px-3.5 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <CheckCircle2 size={13} />
+                  <span>Publish Settings</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => navigate(`/events/${ev.id}/waiting`)}
+                  className="px-4 py-2 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 shadow-md shadow-orange-500/10"
+                >
+                  <Play size={13} />
+                  <span>Waiting Room</span>
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => navigate(`/events/host/events/${ev.id}/publish`)}
+                className="px-3.5 py-2 rounded-xl bg-neutral-850 hover:bg-neutral-800 text-neutral-300 hover:text-white border border-neutral-750 font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5"
+              >
+                <Info size={13} />
+                <span>Event Details</span>
+              </button>
+            )}
+          </div>
         </div>
       </div>
     );

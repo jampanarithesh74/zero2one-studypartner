@@ -21,7 +21,8 @@ import {
   Info,
   ExternalLink,
   Copy,
-  FileQuestion
+  FileQuestion,
+  Send
 } from "lucide-react";
 import { auth, db, ALLOWED_ADMIN_EMAILS } from "../../lib/firebase";
 import { EventJoinQRCode } from "./EventJoinQRCode";
@@ -349,8 +350,8 @@ export function EventsHostEventSetupPage() {
               transition={{ duration: 0.25 }}
               className="bg-[#0e0e12] border border-neutral-800/90 rounded-3xl p-6 sm:p-10 shadow-2xl space-y-8"
             >
-              {/* Navigation Tabs between Setup & Activities */}
-              <div className="flex items-center gap-2 pb-2 border-b border-neutral-850">
+              {/* Navigation Tabs between Setup & Activities & Publish */}
+              <div className="flex items-center gap-2 pb-2 border-b border-neutral-850 flex-wrap">
                 <div className="px-3.5 py-1.5 rounded-xl bg-orange-500/10 text-orange-400 border border-orange-500/30 text-xs font-bold flex items-center gap-1.5">
                   <Settings size={13} />
                   <span>1. Room Setup</span>
@@ -363,6 +364,15 @@ export function EventsHostEventSetupPage() {
                 >
                   <Layers size={13} />
                   <span>2. Activities Manager</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => navigate(`/events/host/events/${eventId}/publish`)}
+                  className="px-3.5 py-1.5 rounded-xl bg-neutral-900 hover:bg-neutral-850 text-neutral-400 hover:text-white border border-neutral-800 text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <Send size={13} />
+                  <span>3. Pre-flight &amp; Publish</span>
                 </button>
               </div>
 

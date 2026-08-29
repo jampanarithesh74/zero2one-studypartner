@@ -29,7 +29,8 @@ import {
   Save,
   RotateCcw,
   AlertTriangle,
-  GripVertical
+  GripVertical,
+  Send
 } from "lucide-react";
 import { auth, db, ALLOWED_ADMIN_EMAILS } from "../../lib/firebase";
 import {
@@ -612,8 +613,8 @@ export function EventsHostActivitiesPage() {
             >
               {/* Event Context Header */}
               <div className="bg-[#0e0e12] border border-neutral-800/90 rounded-3xl p-6 sm:p-7 shadow-2xl space-y-4">
-                {/* Navigation Tabs between Setup & Activities */}
-                <div className="flex items-center gap-2 pb-4 border-b border-neutral-850">
+                {/* Navigation Tabs between Setup & Activities & Publish */}
+                <div className="flex items-center gap-2 pb-4 border-b border-neutral-850 flex-wrap">
                   <button
                     type="button"
                     onClick={() => handleSafeNavigate(`/events/host/events/${eventId}/setup`)}
@@ -627,6 +628,15 @@ export function EventsHostActivitiesPage() {
                     <Layers size={13} />
                     <span>2. Activities Manager</span>
                   </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleSafeNavigate(`/events/host/events/${eventId}/publish`)}
+                    className="px-3.5 py-1.5 rounded-xl bg-neutral-900 hover:bg-neutral-850 text-neutral-400 hover:text-white border border-neutral-800 text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Send size={13} />
+                    <span>3. Pre-flight &amp; Publish</span>
+                  </button>
                 </div>
 
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -907,6 +917,27 @@ export function EventsHostActivitiesPage() {
                   <span>
                     Use the <strong>↑</strong> and <strong>↓</strong> buttons to organize the sequence. Activities will be executed in this order when running the live event. Click <strong>Save Sequence</strong> to persist changes.
                   </span>
+                </div>
+
+                {/* Bottom Navigation Buttons */}
+                <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-neutral-850">
+                  <button
+                    type="button"
+                    onClick={() => handleSafeNavigate(`/events/host/events/${eventId}/setup`)}
+                    className="w-full sm:w-auto px-4 py-3 rounded-xl bg-neutral-900 hover:bg-neutral-850 text-neutral-300 hover:text-white border border-neutral-800 font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-2"
+                  >
+                    <ArrowLeft size={13} />
+                    <span>Back to Room Setup</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleSafeNavigate(`/events/host/events/${eventId}/publish`)}
+                    className="w-full sm:w-auto px-5 py-3 rounded-xl bg-orange-500 hover:bg-orange-600 active:scale-[0.99] text-white font-bold text-xs uppercase tracking-wider transition-all duration-200 cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-orange-500/20"
+                  >
+                    <Send size={13} />
+                    <span>Proceed to Pre-flight &amp; Publish →</span>
+                  </button>
                 </div>
               </div>
             </motion.div>
