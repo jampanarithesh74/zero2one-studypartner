@@ -349,6 +349,23 @@ export function EventsHostEventSetupPage() {
               transition={{ duration: 0.25 }}
               className="bg-[#0e0e12] border border-neutral-800/90 rounded-3xl p-6 sm:p-10 shadow-2xl space-y-8"
             >
+              {/* Navigation Tabs between Setup & Activities */}
+              <div className="flex items-center gap-2 pb-2 border-b border-neutral-850">
+                <div className="px-3.5 py-1.5 rounded-xl bg-orange-500/10 text-orange-400 border border-orange-500/30 text-xs font-bold flex items-center gap-1.5">
+                  <Settings size={13} />
+                  <span>1. Room Setup</span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => navigate(`/events/host/events/${eventId}/activities`)}
+                  className="px-3.5 py-1.5 rounded-xl bg-neutral-900 hover:bg-neutral-850 text-neutral-400 hover:text-white border border-neutral-800 text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <Layers size={13} />
+                  <span>2. Activities Manager</span>
+                </button>
+              </div>
+
               {/* Header Details */}
               <div className="text-center space-y-3">
                 <div className="text-[10px] font-black text-orange-500 uppercase tracking-widest">
@@ -572,33 +589,44 @@ export function EventsHostEventSetupPage() {
               </div>
 
               {/* Action Buttons */}
-              <div className="flex flex-col-reverse sm:flex-row items-center gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => navigate("/events/host/dashboard")}
-                  disabled={isSaving}
-                  className="w-full sm:w-1/3 py-3.5 rounded-xl bg-neutral-900 hover:bg-neutral-850 text-neutral-300 hover:text-white border border-neutral-800 font-bold text-xs uppercase tracking-wider transition-all cursor-pointer disabled:opacity-50"
-                >
-                  Back
-                </button>
+              <div className="space-y-3 pt-2">
+                <div className="flex flex-col-reverse sm:flex-row items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => navigate("/events/host/dashboard")}
+                    disabled={isSaving}
+                    className="w-full sm:w-1/3 py-3.5 rounded-xl bg-neutral-900 hover:bg-neutral-850 text-neutral-300 hover:text-white border border-neutral-800 font-bold text-xs uppercase tracking-wider transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    Back
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleSaveRoomType}
+                    disabled={isSaving}
+                    className="w-full sm:w-2/3 py-3.5 rounded-xl bg-orange-500 hover:bg-orange-600 active:scale-[0.99] text-white font-bold text-xs uppercase tracking-wider transition-all duration-200 cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-orange-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isSaving ? (
+                      <>
+                        <Loader2 size={16} className="animate-spin" />
+                        <span>Saving Room Type...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Save size={15} />
+                        <span>Save Room Configuration</span>
+                      </>
+                    )}
+                  </button>
+                </div>
 
                 <button
                   type="button"
-                  onClick={handleSaveRoomType}
-                  disabled={isSaving}
-                  className="w-full sm:w-2/3 py-3.5 rounded-xl bg-orange-500 hover:bg-orange-600 active:scale-[0.99] text-white font-bold text-xs uppercase tracking-wider transition-all duration-200 cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-orange-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                  onClick={() => navigate(`/events/host/events/${eventId}/activities`)}
+                  className="w-full py-3 rounded-xl bg-neutral-900/80 hover:bg-neutral-850 text-orange-400 hover:text-orange-300 border border-orange-500/20 hover:border-orange-500/40 font-bold text-xs uppercase tracking-wider transition-all duration-200 cursor-pointer flex items-center justify-center gap-2"
                 >
-                  {isSaving ? (
-                    <>
-                      <Loader2 size={16} className="animate-spin" />
-                      <span>Saving Room Type...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Save size={15} />
-                      <span>Save Room Configuration</span>
-                    </>
-                  )}
+                  <Layers size={14} />
+                  <span>Configure Activities Sequence →</span>
                 </button>
               </div>
             </motion.div>

@@ -22,6 +22,10 @@ import { EventsJoinPlaceholderPage } from "./components/events/EventsJoinPlaceho
 import { EventsHostLoginPage } from "./components/events/EventsHostLoginPage";
 import { EventsHostDashboardPage } from "./components/events/EventsHostDashboardPage";
 import { EventsHostEventSetupPage } from "./components/events/EventsHostEventSetupPage";
+import { EventsHostActivitiesPage } from "./components/events/EventsHostActivitiesPage";
+import { EventsHostQuizBuilderPage } from "./components/events/EventsHostQuizBuilderPage";
+import { EventsHostCrosswordBuilderPage } from "./components/events/EventsHostCrosswordBuilderPage";
+import { EventsHostRiddleBuilderPage } from "./components/events/EventsHostRiddleBuilderPage";
 import { EventsHostPlaceholderPage } from "./components/events/EventsHostPlaceholderPage";
 import { EventsListingPage } from "./components/events/EventsListingPage";
 import { EventWaitingRoomPage } from "./components/events/EventWaitingRoomPage";
@@ -5577,6 +5581,13 @@ export default function App() {
                 <Route path="/events/host" element={<EventsHostLoginPage />} />
                 <Route path="/events/host/dashboard" element={<EventsHostDashboardPage />} />
                 <Route path="/events/host/events/:eventId/setup" element={<EventsHostEventSetupPage />} />
+                <Route path="/events/host/events/:eventId/activities" element={<EventsHostActivitiesPage />} />
+                <Route path="/events/host/events/:eventId/activities/:activityId/quiz" element={<EventsHostQuizBuilderPage />} />
+                <Route path="/events/host/events/:eventId/activities/:activityId/quiz-builder" element={<EventsHostQuizBuilderPage />} />
+                <Route path="/events/host/events/:eventId/activities/:activityId/crossword" element={<EventsHostCrosswordBuilderPage />} />
+                <Route path="/events/host/events/:eventId/activities/:activityId/crossword-builder" element={<EventsHostCrosswordBuilderPage />} />
+                <Route path="/events/host/events/:eventId/activities/:activityId/riddle" element={<EventsHostRiddleBuilderPage />} />
+                <Route path="/events/host/events/:eventId/activities/:activityId/riddle-builder" element={<EventsHostRiddleBuilderPage />} />
                 <Route path="/events/list" element={<EventsListingPage currentUserEmail={user?.email} currentUserId={user?.uid} isAdmin={isAdmin} />} />
                 
                 {/* Event Participant & Room Routes */}

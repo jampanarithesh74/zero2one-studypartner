@@ -1,10 +1,13 @@
-import { useState, useEffect, FormEvent } from "react";
+import { useState, useEffect, useCallback, FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { onAuthStateChanged, signOut, User } from "firebase/auth";
 import { 
   collection, 
   doc, 
   setDoc, 
+  getDocs,
+  query,
+  where,
   serverTimestamp 
 } from "firebase/firestore";
 import { motion, AnimatePresence } from "motion/react";
@@ -29,11 +32,35 @@ import {
   ArrowRight,
   Settings,
   Info,
-  ExternalLink
+  ExternalLink,
+  Layers,
+  RotateCw,
+  FolderOpen
 } from "lucide-react";
 import { auth, db, ALLOWED_ADMIN_EMAILS } from "../../lib/firebase";
 import { generateUniqueEventCode } from "../../lib/eventCodeService";
 import { EventJoinQRCode } from "./EventJoinQRCode";
+
+export interface HostEventItem {
+  id: string;
+  eventId: string;
+  title: string;
+  name?: string;
+  description?: string;
+  eventCode: string;
+  code?: string;
+  date: string;
+  time: string;
+  startDate?: string;
+  endDate?: string;
+  status: string;
+  roomType: "normal" | "linkedin";
+  acceptingParticipants: boolean;
+  ownerId: string;
+  createdBy?: string;
+  createdAt?: any;
+  updatedAt?: any;
+}
 
 export interface CreatedEventInfo {
   eventId: string;
@@ -57,6 +84,11 @@ export function EventsHostDashboardPage() {
 
   // View state
   const [currentView, setCurrentView] = useState<DashboardView>("dashboard");
+
+  // Host Events State (Feature 3D)
+  const [hostEvents, setHostEvents] = useState<HostEventItem[]>([]);
+  const [isLoadingEvents, setIsLoadingEvents] = useState<boolean>(true);
+  const [eventsLoadError, setEventsLoadError] = useState<string | null>(null);
 
   // Form State
   const [eventName, setEventName] = useState<string>("");
@@ -110,6 +142,67 @@ export function EventsHostDashboardPage() {
 
     return () => unsubscribe();
   }, [navigate]);
+
+  // Point-in-time query for host events scoped strictly to ownerId == currentUser.uid
+  const fetchHostEvents = useCallback(async (uid: string) => {
+    if (!uid) return;
+    setIsLoadingEvents(true);
+    setEventsLoadError(null);
+
+    try {
+      const eventsRef = collection(db, "events");
+      const hostEventsQuery = query(eventsRef, where("ownerId", "==", uid));
+      const querySnapshot = await getDocs(hostEventsQuery);
+
+      const items: HostEventItem[] = [];
+      querySnapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        if (data) {
+          items.push({
+            id: docSnap.id,
+            eventId: data.eventId || docSnap.id,
+            title: data.title || data.name || "Untitled Event",
+            name: data.name || data.title || "Untitled Event",
+            description: data.description || "",
+            eventCode: data.eventCode || data.code || "N/A",
+            code: data.code || data.eventCode || "N/A",
+            date: data.date || "",
+            time: data.time || "",
+            startDate: data.startDate || "",
+            endDate: data.endDate || "",
+            status: (data.status || "draft").toLowerCase(),
+            roomType: (data.roomType || "normal") as "normal" | "linkedin",
+            acceptingParticipants: !!data.acceptingParticipants,
+            ownerId: data.ownerId || uid,
+            createdBy: data.createdBy || "",
+            createdAt: data.createdAt,
+            updatedAt: data.updatedAt,
+          });
+        }
+      });
+
+      // Sort in-memory by updatedAt / createdAt descending to avoid composite index requirements
+      items.sort((a, b) => {
+        const timeA = a.updatedAt?.toMillis?.() || a.createdAt?.toMillis?.() || (a.date ? new Date(`${a.date}T${a.time || "00:00"}`).getTime() : 0);
+        const timeB = b.updatedAt?.toMillis?.() || b.createdAt?.toMillis?.() || (b.date ? new Date(`${b.date}T${b.time || "00:00"}`).getTime() : 0);
+        return timeB - timeA;
+      });
+
+      setHostEvents(items);
+    } catch (err: any) {
+      console.error("Error querying host events:", err);
+      setEventsLoadError("Unable to load your events. Please check your network connection and try again.");
+    } finally {
+      setIsLoadingEvents(false);
+    }
+  }, []);
+
+  // Fetch host events when user is authenticated
+  useEffect(() => {
+    if (currentUser?.uid) {
+      fetchHostEvents(currentUser.uid);
+    }
+  }, [currentUser, fetchHostEvents]);
 
   // Handle Form Validation
   const validateForm = (): boolean => {
@@ -218,6 +311,9 @@ export function EventsHostDashboardPage() {
         ownerId: currentUser.uid,
       });
 
+      // Refresh host events list so the new event appears in My Events immediately
+      fetchHostEvents(currentUser.uid);
+
       // Reset form fields
       setEventName("");
       setDescription("");
@@ -271,6 +367,22 @@ export function EventsHostDashboardPage() {
     }
   };
 
+  // Format Helper for Date
+  const formatEventCreatedDate = (timestamp: any) => {
+    if (!timestamp) return null;
+    try {
+      const dateObj = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+      if (isNaN(dateObj.getTime())) return null;
+      return dateObj.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      });
+    } catch {
+      return null;
+    }
+  };
+
   if (isLoadingAuth || !currentUser) {
     return (
       <div className="min-h-screen bg-[#070709] text-white flex items-center justify-center font-sans">
@@ -290,6 +402,117 @@ export function EventsHostDashboardPage() {
 
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   const createdJoinUrl = createdEvent?.eventCode ? `${origin}/events/join?code=${encodeURIComponent(createdEvent.eventCode)}` : "";
+
+  // Group events by status
+  const draftEvents = hostEvents.filter(
+    (ev) => ev.status === "draft" || (!ev.status)
+  );
+
+  const activeEvents = hostEvents.filter(
+    (ev) =>
+      ev.status === "active" ||
+      ev.status === "upcoming" ||
+      ev.status === "live" ||
+      ev.status === "running" ||
+      ev.status === "published"
+  );
+
+  const completedEvents = hostEvents.filter(
+    (ev) =>
+      ev.status === "completed" ||
+      ev.status === "ended" ||
+      ev.status === "archived"
+  );
+
+  const hasAnyEvents = hostEvents.length > 0;
+
+  // Helper to render Event Card
+  const renderEventCard = (ev: HostEventItem, isDraft: boolean) => {
+    const createdDateFormatted = formatEventCreatedDate(ev.createdAt);
+
+    return (
+      <div
+        key={ev.id}
+        className="group relative rounded-2xl p-5 bg-[#121217] border border-neutral-800 hover:border-neutral-700 transition-all duration-200 flex flex-col gap-4 shadow-sm"
+      >
+        {/* Top Header: Title & Badges */}
+        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2.5">
+          <div className="space-y-1 min-w-0 flex-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className={`text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full border ${
+                isDraft
+                  ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                  : ev.status === "completed" || ev.status === "ended"
+                  ? "bg-neutral-800 text-neutral-400 border-neutral-700"
+                  : "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+              }`}>
+                {ev.status.toUpperCase()}
+              </span>
+
+              <span className="text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full bg-neutral-850 text-neutral-300 border border-neutral-750">
+                {ev.roomType === "linkedin" ? "LINKEDIN ROOM" : "NORMAL ROOM"}
+              </span>
+            </div>
+
+            <h3 className="text-base font-black text-white uppercase tracking-tight truncate pt-0.5">
+              {ev.title}
+            </h3>
+
+            {ev.description && (
+              <p className="text-xs text-neutral-400 line-clamp-2 font-normal">
+                {ev.description}
+              </p>
+            )}
+          </div>
+
+          {/* Event Code Badge */}
+          <div className="flex items-center gap-2 bg-neutral-900 border border-neutral-800 rounded-xl px-3 py-1.5 self-start shrink-0">
+            <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">
+              CODE:
+            </span>
+            <span className="text-xs font-mono font-black text-orange-400 tracking-wider">
+              {ev.eventCode}
+            </span>
+          </div>
+        </div>
+
+        {/* Metadata Details Row */}
+        <div className="flex items-center justify-between gap-3 pt-3 border-t border-neutral-850 text-xs text-neutral-400 flex-wrap">
+          <div className="flex items-center gap-4 flex-wrap">
+            {ev.date && (
+              <div className="flex items-center gap-1.5">
+                <Calendar size={13} className="text-neutral-500" />
+                <span>{ev.date}</span>
+              </div>
+            )}
+            {ev.time && (
+              <div className="flex items-center gap-1.5">
+                <Clock size={13} className="text-neutral-500" />
+                <span>{ev.time}</span>
+              </div>
+            )}
+            {createdDateFormatted && (
+              <span className="text-[11px] text-neutral-500 hidden sm:inline">
+                Created: {createdDateFormatted}
+              </span>
+            )}
+          </div>
+
+          {/* Card Action */}
+          {isDraft && (
+            <button
+              type="button"
+              onClick={() => navigate(`/events/host/events/${ev.id}/setup`)}
+              className="px-4 py-2 rounded-xl bg-orange-500 hover:bg-orange-600 active:scale-[0.98] text-white font-bold text-xs uppercase tracking-wider transition-all duration-200 cursor-pointer flex items-center gap-1.5 shadow-md shadow-orange-500/10 ml-auto"
+            >
+              <span>CONTINUE SETUP</span>
+              <ArrowRight size={13} />
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-[#070709] text-white flex flex-col justify-between selection:bg-orange-500/30 selection:text-orange-200 font-sans">
@@ -342,8 +565,8 @@ export function EventsHostDashboardPage() {
       </header>
 
       {/* Main Content Area */}
-      <main className="flex-1 flex flex-col items-center justify-center px-4 sm:px-6 lg:px-8 py-10 sm:py-14">
-        <div className="w-full max-w-2xl mx-auto">
+      <main className="flex-1 flex flex-col items-center px-4 sm:px-6 lg:px-8 py-8 sm:py-12">
+        <div className="w-full max-w-3xl mx-auto">
           <AnimatePresence mode="wait">
             {/* VIEW 1: HOST DASHBOARD */}
             {currentView === "dashboard" && (
@@ -353,69 +576,232 @@ export function EventsHostDashboardPage() {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -15 }}
                 transition={{ duration: 0.25 }}
-                className="bg-[#0e0e12] border border-neutral-800/90 rounded-3xl p-6 sm:p-10 shadow-2xl space-y-8"
+                className="space-y-8"
               >
-                {/* Title & Status Badge */}
-                <div className="text-center space-y-3">
-                  <div className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-bold uppercase tracking-wider">
-                    <ShieldCheck size={14} />
-                    <span>Authenticated Organizer Session</span>
+                {/* Header Card */}
+                <div className="bg-[#0e0e12] border border-neutral-800/90 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6">
+                  {/* Title & Status Badge */}
+                  <div className="text-center space-y-3">
+                    <div className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-bold uppercase tracking-wider">
+                      <ShieldCheck size={14} />
+                      <span>Authenticated Organizer Session</span>
+                    </div>
+
+                    <div className="space-y-1">
+                      <div className="text-[10px] font-black text-orange-500 uppercase tracking-widest">
+                        ZERO2ONE EVENTS
+                      </div>
+                      <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight uppercase">
+                        HOST DASHBOARD
+                      </h1>
+                      <p className="text-sm sm:text-base text-neutral-300 font-medium">
+                        Welcome, <span className="text-orange-400 font-bold">{displayName}</span>
+                      </p>
+                    </div>
                   </div>
 
-                  <div className="space-y-1">
-                    <div className="text-[10px] font-black text-orange-500 uppercase tracking-widest">
-                      ZERO2ONE EVENTS
+                  {/* Primary Action Button: CREATE EVENT */}
+                  <div className="pt-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFormErrors({});
+                        setCurrentView("create");
+                      }}
+                      className="w-full py-4 px-6 rounded-2xl bg-orange-500 hover:bg-orange-600 active:scale-[0.99] text-white font-black text-sm uppercase tracking-wider transition-all duration-200 cursor-pointer flex items-center justify-center gap-2.5 shadow-xl shadow-orange-500/20"
+                    >
+                      <Plus size={18} className="stroke-[3]" />
+                      <span>+ CREATE EVENT</span>
+                    </button>
+                  </div>
+
+                  {/* Organizer Status Card */}
+                  <div className="p-4 sm:p-5 rounded-2xl bg-[#14141a] border border-neutral-800 space-y-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-orange-500/10 border border-orange-500/20 text-orange-400 flex items-center justify-center shrink-0">
+                        <UserIcon size={18} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs font-bold text-white uppercase tracking-tight flex items-center gap-2">
+                          <span>{displayName}</span>
+                          {isSuperAdmin && (
+                            <span className="px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-300 text-[9px] font-extrabold uppercase">
+                              Admin
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-neutral-400 truncate flex items-center gap-1.5 mt-0.5">
+                          <Mail size={12} className="shrink-0 text-neutral-500" />
+                          <span>{userEmail}</span>
+                        </div>
+                      </div>
                     </div>
-                    <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight uppercase">
-                      HOST DASHBOARD
-                    </h1>
-                    <p className="text-sm sm:text-base text-neutral-300 font-medium">
-                      Welcome, <span className="text-orange-400 font-bold">{displayName}</span>
-                    </p>
                   </div>
                 </div>
 
-                {/* Primary Action Button: CREATE EVENT */}
-                <div className="pt-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setFormErrors({});
-                      setCurrentView("create");
-                    }}
-                    className="w-full py-4 px-6 rounded-2xl bg-orange-500 hover:bg-orange-600 active:scale-[0.99] text-white font-black text-sm uppercase tracking-wider transition-all duration-200 cursor-pointer flex items-center justify-center gap-2.5 shadow-xl shadow-orange-500/20"
-                  >
-                    <Plus size={18} className="stroke-[3]" />
-                    <span>+ CREATE EVENT</span>
-                  </button>
-                </div>
-
-                {/* Organizer Status Card */}
-                <div className="p-5 rounded-2xl bg-[#14141a] border border-neutral-800 space-y-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-orange-500/10 border border-orange-500/20 text-orange-400 flex items-center justify-center shrink-0">
-                      <UserIcon size={18} />
+                {/* MY EVENTS SECTION */}
+                <div className="bg-[#0e0e12] border border-neutral-800/90 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-8">
+                  {/* Section Title */}
+                  <div className="flex items-center justify-between pb-4 border-b border-neutral-850">
+                    <div className="space-y-0.5">
+                      <h2 className="text-lg sm:text-xl font-black text-white uppercase tracking-tight flex items-center gap-2">
+                        <FolderOpen size={20} className="text-orange-500" />
+                        <span>MY EVENTS</span>
+                      </h2>
+                      <p className="text-xs text-neutral-400">
+                        Manage and configure events created under your account.
+                      </p>
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-xs font-bold text-white uppercase tracking-tight flex items-center gap-2">
-                        <span>{displayName}</span>
-                        {isSuperAdmin && (
-                          <span className="px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-300 text-[9px] font-extrabold uppercase">
-                            Admin
-                          </span>
+
+                    <button
+                      type="button"
+                      onClick={() => currentUser?.uid && fetchHostEvents(currentUser.uid)}
+                      disabled={isLoadingEvents}
+                      className="p-2 rounded-xl bg-neutral-900 hover:bg-neutral-850 text-neutral-400 hover:text-white border border-neutral-800 transition-all cursor-pointer disabled:opacity-50"
+                      title="Refresh Events"
+                      aria-label="Refresh Events"
+                    >
+                      <RotateCw size={14} className={isLoadingEvents ? "animate-spin text-orange-500" : ""} />
+                    </button>
+                  </div>
+
+                  {/* LOADING STATE */}
+                  {isLoadingEvents && (
+                    <div className="py-12 text-center space-y-3">
+                      <Loader2 size={32} className="text-orange-500 animate-spin mx-auto" />
+                      <div className="space-y-1">
+                        <p className="text-xs font-bold text-white uppercase tracking-wider">
+                          Loading Your Events...
+                        </p>
+                        <p className="text-[11px] text-neutral-500">
+                          Retrieving events scoped to your organizer account.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ERROR STATE */}
+                  {!isLoadingEvents && eventsLoadError && (
+                    <div className="p-5 rounded-2xl bg-red-500/10 border border-red-500/30 text-center space-y-3">
+                      <AlertCircle size={24} className="text-red-400 mx-auto" />
+                      <p className="text-xs text-red-300 font-medium max-w-md mx-auto">
+                        {eventsLoadError}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => currentUser?.uid && fetchHostEvents(currentUser.uid)}
+                        className="px-4 py-2 rounded-xl bg-neutral-900 hover:bg-neutral-850 text-neutral-200 border border-neutral-800 text-xs font-semibold uppercase tracking-wider transition-all cursor-pointer inline-flex items-center gap-1.5"
+                      >
+                        <RotateCw size={12} />
+                        <span>Try Again</span>
+                      </button>
+                    </div>
+                  )}
+
+                  {/* NO EVENTS ACROSS ALL CATEGORIES EMPTY STATE */}
+                  {!isLoadingEvents && !eventsLoadError && !hasAnyEvents && (
+                    <div className="py-12 px-6 rounded-2xl bg-neutral-900/40 border border-dashed border-neutral-800 text-center space-y-4">
+                      <div className="w-12 h-12 rounded-2xl bg-neutral-850 border border-neutral-750 text-neutral-400 flex items-center justify-center mx-auto">
+                        <FolderOpen size={24} />
+                      </div>
+                      <div className="space-y-1">
+                        <h3 className="text-sm font-black text-white uppercase tracking-wider">
+                          You haven't created any events yet.
+                        </h3>
+                        <p className="text-xs text-neutral-400">
+                          Create your first interactive event to get started.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFormErrors({});
+                          setCurrentView("create");
+                        }}
+                        className="px-5 py-2.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-bold text-xs uppercase tracking-wider transition-all duration-200 cursor-pointer inline-flex items-center gap-1.5 shadow-lg shadow-orange-500/20"
+                      >
+                        <Plus size={15} className="stroke-[3]" />
+                        <span>+ CREATE EVENT</span>
+                      </button>
+                    </div>
+                  )}
+
+                  {/* CATEGORIES BREAKDOWN */}
+                  {!isLoadingEvents && !eventsLoadError && hasAnyEvents && (
+                    <div className="space-y-8">
+                      {/* 1. DRAFT EVENTS */}
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between pb-2 border-b border-neutral-850">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-black tracking-wider text-amber-400 uppercase">
+                              DRAFT EVENTS
+                            </span>
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/20 font-bold">
+                              {draftEvents.length}
+                            </span>
+                          </div>
+                        </div>
+
+                        {draftEvents.length === 0 ? (
+                          <div className="py-6 px-4 rounded-xl bg-neutral-900/30 border border-dashed border-neutral-850 text-center text-xs text-neutral-500">
+                            No events here yet.
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            {draftEvents.map((ev) => renderEventCard(ev, true))}
+                          </div>
                         )}
                       </div>
-                      <div className="text-xs text-neutral-400 truncate flex items-center gap-1.5 mt-0.5">
-                        <Mail size={12} className="shrink-0 text-neutral-500" />
-                        <span>{userEmail}</span>
+
+                      {/* 2. ACTIVE / UPCOMING EVENTS */}
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between pb-2 border-b border-neutral-850">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-black tracking-wider text-emerald-400 uppercase">
+                              ACTIVE / UPCOMING EVENTS
+                            </span>
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 font-bold">
+                              {activeEvents.length}
+                            </span>
+                          </div>
+                        </div>
+
+                        {activeEvents.length === 0 ? (
+                          <div className="py-6 px-4 rounded-xl bg-neutral-900/30 border border-dashed border-neutral-850 text-center text-xs text-neutral-500">
+                            No events here yet.
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            {activeEvents.map((ev) => renderEventCard(ev, false))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 3. COMPLETED EVENTS */}
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between pb-2 border-b border-neutral-850">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-black tracking-wider text-neutral-400 uppercase">
+                              COMPLETED EVENTS
+                            </span>
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-neutral-800 text-neutral-400 border border-neutral-700 font-bold">
+                              {completedEvents.length}
+                            </span>
+                          </div>
+                        </div>
+
+                        {completedEvents.length === 0 ? (
+                          <div className="py-6 px-4 rounded-xl bg-neutral-900/30 border border-dashed border-neutral-850 text-center text-xs text-neutral-500">
+                            No events here yet.
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            {completedEvents.map((ev) => renderEventCard(ev, false))}
+                          </div>
+                        )}
                       </div>
                     </div>
-                  </div>
-
-                  <div className="pt-3 border-t border-neutral-800/80 flex items-center justify-between text-xs text-neutral-400">
-                    <span>Access Status:</span>
-                    <span className="font-semibold text-emerald-400">You are signed in as an organizer.</span>
-                  </div>
+                  )}
                 </div>
 
                 {/* Return Hub Link */}
@@ -833,3 +1219,4 @@ export function EventsHostDashboardPage() {
     </div>
   );
 }
+
