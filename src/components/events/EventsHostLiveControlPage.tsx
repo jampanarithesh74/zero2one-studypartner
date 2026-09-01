@@ -53,6 +53,9 @@ import {
 } from "../../services/customQuizLiveService";
 import { GenericQuizQuestion } from "../../services/quizBuilderService";
 import { LiveCrosswordHostView } from "./live/LiveCrosswordHostView";
+import { GenericRiddleEntry } from "../../services/riddleBuilderService";
+import { RiddleActivityAdapter } from "../../services/riddleActivityAdapter";
+import { LiveRiddleHostView } from "./live/LiveRiddleHostView";
 
 interface EventDocData {
   id: string;
@@ -115,6 +118,10 @@ export function EventsHostLiveControlPage() {
   const [quizQuestions, setQuizQuestions] = useState<GenericQuizQuestion[]>([]);
   const [isLoadingQuizQuestions, setIsLoadingQuizQuestions] = useState<boolean>(false);
   const [quizLeaderboard, setQuizLeaderboard] = useState<CustomQuizLeaderboardEntry[]>([]);
+
+  // Custom Riddle Activity State
+  const [riddles, setRiddles] = useState<GenericRiddleEntry[]>([]);
+  const [isLoadingRiddles, setIsLoadingRiddles] = useState<boolean>(false);
 
   // 1. Auth Listener
   useEffect(() => {
@@ -441,10 +448,141 @@ export function EventsHostLiveControlPage() {
     return () => unsub();
   }, [eventId, currentActivityId, currentActivityType, liveSession?.stage]);
 
+  // Load Riddle entries when active activity is "riddle"
+  useEffect(() => {
+    if (!eventId || !currentActivityId || currentActivityType !== "riddle") {
+      setRiddles([]);
+      return;
+    }
+
+    let isMounted = true;
+    setIsLoadingRiddles(true);
+
+    RiddleActivityAdapter.fetchRiddleEntries(eventId, currentActivityId)
+      .then((entries) => {
+        if (isMounted) {
+          setRiddles(entries);
+          setIsLoadingRiddles(false);
+        }
+      })
+      .catch((err) => {
+        console.error("Error loading live riddle entries for host deck:", err);
+        if (isMounted) {
+          setIsLoadingRiddles(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [eventId, currentActivityId, currentActivityType]);
+
   // Quiz-specific current question pointers
   const currentQuizQuestionIndex = typeof liveSession?.stepIndex === "number" ? liveSession.stepIndex : 0;
   const currentQuizQuestion = quizQuestions[currentQuizQuestionIndex] || null;
   const isLastQuizQuestion = currentQuizQuestionIndex >= quizQuestions.length - 1;
+
+  // Riddle-specific current question pointers
+  const currentRiddleIndex = typeof liveSession?.stepIndex === "number" ? liveSession.stepIndex : 0;
+  const currentRiddleQuestion = riddles[currentRiddleIndex] || null;
+  const isLastRiddleQuestion = currentRiddleIndex >= riddles.length - 1;
+
+  // Riddle Question Transitions
+  const handleStartRiddleQuestion = async () => {
+    if (!eventId || !liveSession || !currentRiddleQuestion) return;
+    setIsActionPending(true);
+    setActionError(null);
+
+    try {
+      await RiddleActivityAdapter.startRiddleQuestion(
+        eventId,
+        liveSession.stageSequenceNumber,
+        currentRiddleQuestion.timeLimitSec || 20
+      );
+      triggerSuccessFeedback(`Riddle #${currentRiddleIndex + 1} timer started! Attendees can now submit answers.`);
+    } catch (err: any) {
+      setActionError(err.message || "Failed to start riddle.");
+    } finally {
+      setIsActionPending(false);
+    }
+  };
+
+  const handleFreezeRiddleQuestion = async () => {
+    if (!eventId || !liveSession) return;
+    setIsActionPending(true);
+    setActionError(null);
+
+    try {
+      await RiddleActivityAdapter.freezeRiddleQuestion(
+        eventId,
+        liveSession.stageSequenceNumber
+      );
+      triggerSuccessFeedback(`Riddle #${currentRiddleIndex + 1} frozen! Submissions locked.`);
+    } catch (err: any) {
+      setActionError(err.message || "Failed to freeze riddle.");
+    } finally {
+      setIsActionPending(false);
+    }
+  };
+
+  const handleRevealRiddleQuestion = async () => {
+    if (!eventId || !liveSession) return;
+    setIsActionPending(true);
+    setActionError(null);
+
+    try {
+      await RiddleActivityAdapter.revealRiddleQuestion(
+        eventId,
+        liveSession.stageSequenceNumber
+      );
+      triggerSuccessFeedback(`Riddle #${currentRiddleIndex + 1} solution revealed to all attendees.`);
+    } catch (err: any) {
+      setActionError(err.message || "Failed to reveal riddle solution.");
+    } finally {
+      setIsActionPending(false);
+    }
+  };
+
+  const handleShowRiddleLeaderboard = async () => {
+    if (!eventId || !liveSession) return;
+    setIsActionPending(true);
+    setActionError(null);
+
+    try {
+      await RiddleActivityAdapter.showRiddleLeaderboard(
+        eventId,
+        liveSession.stageSequenceNumber
+      );
+      triggerSuccessFeedback("Riddle leaderboard standings displayed.");
+    } catch (err: any) {
+      setActionError(err.message || "Failed to show riddle leaderboard.");
+    } finally {
+      setIsActionPending(false);
+    }
+  };
+
+  const handleNextRiddleQuestion = async () => {
+    if (!eventId || !liveSession || isLastRiddleQuestion) return;
+    setIsActionPending(true);
+    setActionError(null);
+
+    const nextIdx = currentRiddleIndex + 1;
+    const nextR = riddles[nextIdx];
+
+    try {
+      await RiddleActivityAdapter.advanceToNextRiddle(
+        eventId,
+        liveSession.stageSequenceNumber,
+        nextIdx,
+        nextR?.timeLimitSec || 20
+      );
+      triggerSuccessFeedback(`Advanced to Riddle #${nextIdx + 1} of ${riddles.length}. Ready for launch!`);
+    } catch (err: any) {
+      setActionError(err.message || "Failed to advance to next riddle.");
+    } finally {
+      setIsActionPending(false);
+    }
+  };
 
   // Quiz Question Transitions
   const handleStartQuizQuestion = async () => {
@@ -1085,6 +1223,12 @@ export function EventsHostLiveControlPage() {
                                   .padStart(2, "0")}:${((currentQuizQuestion.timeLimitSec || 15) % 60)
                                   .toString()
                                   .padStart(2, "0")}`
+                              : currentActivity.type === "riddle" && currentRiddleQuestion
+                              ? `${Math.floor((currentRiddleQuestion.timeLimitSec || 20) / 60)
+                                  .toString()
+                                  .padStart(2, "0")}:${((currentRiddleQuestion.timeLimitSec || 20) % 60)
+                                  .toString()
+                                  .padStart(2, "0")}`
                               : `${Math.floor((currentActivity.durationSeconds || currentActivity.config?.timeLimit || 60) / 60)
                                   .toString()
                                   .padStart(2, "0")}:${((currentActivity.durationSeconds || currentActivity.config?.timeLimit || 60) % 60)
@@ -1094,6 +1238,17 @@ export function EventsHostLiveControlPage() {
                         </div>
                       </div>
                     </div>
+
+                    {/* RIDDLE-SPECIFIC RADAR & HOST VIEW (When type === "riddle") */}
+                    {currentActivity.type === "riddle" && liveSession && (
+                      <LiveRiddleHostView
+                        eventId={eventId!}
+                        activityId={currentActivity.id}
+                        session={liveSession}
+                        riddles={riddles}
+                        isLoadingRiddles={isLoadingRiddles}
+                      />
+                    )}
 
                     {/* QUIZ-SPECIFIC QUESTION RADAR (When type === "quiz") */}
                     {currentActivity.type === "quiz" && (
@@ -1368,6 +1523,172 @@ export function EventsHostLiveControlPage() {
                                     <>
                                       <span>
                                         NEXT QUESTION (Q{currentQuizQuestionIndex + 2} of {quizQuestions.length})
+                                      </span>
+                                      <ChevronRight size={18} />
+                                    </>
+                                  )}
+                                </button>
+                              ) : !isLastActivity ? (
+                                <button
+                                  type="button"
+                                  onClick={handleNextActivity}
+                                  disabled={isActionPending}
+                                  className="w-full py-4 px-6 rounded-2xl bg-orange-500 hover:bg-orange-600 active:scale-[0.99] text-white font-extrabold text-sm uppercase tracking-wider transition-all duration-200 cursor-pointer flex items-center justify-center gap-2 shadow-xl shadow-orange-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                  {isActionPending ? (
+                                    <>
+                                      <Loader2 size={18} className="animate-spin" />
+                                      <span>ADVANCING TO NEXT ACTIVITY...</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <span>NEXT ACTIVITY ({activities[currentActIdx + 1]?.title})</span>
+                                      <ChevronRight size={18} />
+                                    </>
+                                  )}
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => setShowEndModal(true)}
+                                  disabled={isActionPending}
+                                  className="w-full py-4 px-6 rounded-2xl bg-emerald-500 hover:bg-emerald-600 active:scale-[0.99] text-black font-extrabold text-sm uppercase tracking-wider transition-all duration-200 cursor-pointer flex items-center justify-center gap-2 shadow-xl shadow-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                  <Flag size={18} />
+                                  <span>FINALIZE &amp; COMPLETE LIVE EVENT 🏁</span>
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </>
+                      ) : currentActivity.type === "riddle" ? (
+                        /* --- RIDDLE ACTIVITY CONTROLS --- */
+                        <>
+                          {/* STAGE: READY -> Enable [ START RIDDLE & TIMER ] */}
+                          {currentStage === "ready" && (
+                            <button
+                              type="button"
+                              onClick={handleStartRiddleQuestion}
+                              disabled={isActionPending || !currentRiddleQuestion}
+                              className="w-full py-4 px-6 rounded-2xl bg-emerald-500 hover:bg-emerald-600 active:scale-[0.99] text-black font-extrabold text-sm uppercase tracking-wider transition-all duration-200 cursor-pointer flex items-center justify-center gap-2 shadow-xl shadow-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {isActionPending ? (
+                                <>
+                                  <Loader2 size={18} className="animate-spin" />
+                                  <span>STARTING RIDDLE...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Play size={18} />
+                                  <span>
+                                    START RIDDLE #{currentRiddleIndex + 1} &amp; TIMER (
+                                    {currentRiddleQuestion?.timeLimitSec || 20}s)
+                                  </span>
+                                </>
+                              )}
+                            </button>
+                          )}
+
+                          {/* STAGE: RUNNING -> Enable [ FREEZE ] and [ REVEAL ] */}
+                          {currentStage === "running" && (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <button
+                                type="button"
+                                onClick={handleFreezeRiddleQuestion}
+                                disabled={isActionPending}
+                                className="py-4 px-6 rounded-2xl bg-amber-500 hover:bg-amber-600 active:scale-[0.99] text-black font-extrabold text-sm uppercase tracking-wider transition-all duration-200 cursor-pointer flex items-center justify-center gap-2 shadow-xl shadow-amber-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                {isActionPending ? (
+                                  <Loader2 size={18} className="animate-spin" />
+                                ) : (
+                                  <>
+                                    <Pause size={18} />
+                                    <span>FREEZE SUBMISSIONS</span>
+                                  </>
+                                )}
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={handleRevealRiddleQuestion}
+                                disabled={isActionPending}
+                                className="py-4 px-6 rounded-2xl bg-purple-600 hover:bg-purple-700 active:scale-[0.99] text-white font-extrabold text-sm uppercase tracking-wider transition-all duration-200 cursor-pointer flex items-center justify-center gap-2 shadow-xl shadow-purple-600/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                {isActionPending ? (
+                                  <Loader2 size={18} className="animate-spin" />
+                                ) : (
+                                  <>
+                                    <Eye size={18} />
+                                    <span>REVEAL SOLUTION</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          )}
+
+                          {/* STAGE: FROZEN -> Enable [ REVEAL ] */}
+                          {currentStage === "frozen" && (
+                            <button
+                              type="button"
+                              onClick={handleRevealRiddleQuestion}
+                              disabled={isActionPending}
+                              className="w-full py-4 px-6 rounded-2xl bg-purple-600 hover:bg-purple-700 active:scale-[0.99] text-white font-extrabold text-sm uppercase tracking-wider transition-all duration-200 cursor-pointer flex items-center justify-center gap-2 shadow-xl shadow-purple-600/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {isActionPending ? (
+                                <>
+                                  <Loader2 size={18} className="animate-spin" />
+                                  <span>REVEALING ANSWER...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Eye size={18} />
+                                  <span>REVEAL SOLUTION</span>
+                                </>
+                              )}
+                            </button>
+                          )}
+
+                          {/* STAGE: REVEAL -> Enable [ SHOW LEADERBOARD ] */}
+                          {currentStage === "reveal" && (
+                            <button
+                              type="button"
+                              onClick={handleShowRiddleLeaderboard}
+                              disabled={isActionPending}
+                              className="w-full py-4 px-6 rounded-2xl bg-orange-500 hover:bg-orange-600 active:scale-[0.99] text-white font-extrabold text-sm uppercase tracking-wider transition-all duration-200 cursor-pointer flex items-center justify-center gap-2 shadow-xl shadow-orange-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {isActionPending ? (
+                                <>
+                                  <Loader2 size={18} className="animate-spin" />
+                                  <span>LOADING LEADERBOARD...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Trophy size={18} />
+                                  <span>SHOW RIDDLE LEADERBOARD</span>
+                                </>
+                              )}
+                            </button>
+                          )}
+
+                          {/* STAGE: LEADERBOARD -> Enable [ NEXT RIDDLE ] OR [ NEXT ACTIVITY ] / [ COMPLETE EVENT ] */}
+                          {currentStage === "leaderboard" && (
+                            <div>
+                              {!isLastRiddleQuestion ? (
+                                <button
+                                  type="button"
+                                  onClick={handleNextRiddleQuestion}
+                                  disabled={isActionPending}
+                                  className="w-full py-4 px-6 rounded-2xl bg-orange-500 hover:bg-orange-600 active:scale-[0.99] text-white font-extrabold text-sm uppercase tracking-wider transition-all duration-200 cursor-pointer flex items-center justify-center gap-2 shadow-xl shadow-orange-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                  {isActionPending ? (
+                                    <>
+                                      <Loader2 size={18} className="animate-spin" />
+                                      <span>PREPARING NEXT RIDDLE...</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <span>
+                                        NEXT RIDDLE (#{currentRiddleIndex + 2} of {riddles.length})
                                       </span>
                                       <ChevronRight size={18} />
                                     </>

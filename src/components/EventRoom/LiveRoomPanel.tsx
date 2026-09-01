@@ -33,6 +33,7 @@ import { CanonicalLiveSession } from "../../types/liveEventEngine";
 import { LiveEventEngineService } from "../../services/liveEventEngineService";
 import { LiveQuizParticipantView } from "../events/live/LiveQuizParticipantView";
 import { LiveCrosswordParticipantView } from "../events/live/LiveCrosswordParticipantView";
+import { LiveRiddleParticipantView } from "../events/live/LiveRiddleParticipantView";
 
 export interface ActiveQuestionData {
   question: string;
@@ -277,6 +278,29 @@ export function LiveRoomPanel({
     return (
       <div className="h-full flex flex-col">
         <LiveCrosswordParticipantView
+          eventId={event.id}
+          activityId={canonicalLiveSession.currentActivityId}
+          session={canonicalLiveSession}
+          participant={{
+            id: currentParticipant?.id || participantId,
+            name: currentParticipant?.name || "Event Participant",
+            college: (currentParticipant as any)?.college || "",
+            department: (currentParticipant as any)?.department || "",
+          }}
+        />
+      </div>
+    );
+  }
+
+  if (
+    canonicalLiveSession &&
+    canonicalLiveSession.status === "active" &&
+    canonicalLiveSession.currentActivityType === "riddle" &&
+    canonicalLiveSession.currentActivityId
+  ) {
+    return (
+      <div className="h-full flex flex-col">
+        <LiveRiddleParticipantView
           eventId={event.id}
           activityId={canonicalLiveSession.currentActivityId}
           session={canonicalLiveSession}
