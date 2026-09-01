@@ -52,6 +52,7 @@ import {
   CustomQuizLeaderboardEntry,
 } from "../../services/customQuizLiveService";
 import { GenericQuizQuestion } from "../../services/quizBuilderService";
+import { LiveCrosswordHostView } from "./live/LiveCrosswordHostView";
 
 interface EventDocData {
   id: string;
@@ -1032,8 +1033,23 @@ export function EventsHostLiveControlPage() {
                     animate={{ opacity: 1, y: 0 }}
                     className="space-y-6"
                   >
-                    {/* ACTIVE ACTIVITY HEADER CARD */}
-                    <div className="bg-[#0e0e12] border border-neutral-800/90 rounded-3xl p-6 sm:p-7 shadow-xl space-y-6">
+                    {currentActivity.type === "crossword" && liveSession ? (
+                      <LiveCrosswordHostView
+                        eventId={eventId!}
+                        activityId={currentActivity.id}
+                        session={liveSession}
+                        isActionPending={isActionPending}
+                        onStartActivity={handleStartActivity}
+                        onFreezeActivity={handleFreezeActivity}
+                        onRevealSolutions={handleRevealSolutions}
+                        onShowLeaderboard={handleShowLeaderboard}
+                        onNextActivity={handleNextActivity}
+                        onCompleteEvent={handleCompleteEvent}
+                        isLastActivity={isLastActivity}
+                      />
+                    ) : (
+                      /* ACTIVE ACTIVITY HEADER CARD */
+                      <div className="bg-[#0e0e12] border border-neutral-800/90 rounded-3xl p-6 sm:p-7 shadow-xl space-y-6">
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-neutral-850">
                         <div>
                           <div className="flex items-center gap-2 text-xs font-bold text-orange-400 uppercase tracking-wider">
@@ -1561,6 +1577,7 @@ export function EventsHostLiveControlPage() {
                         </button>
                       </div>
                     </div>
+                    )}
                   </motion.div>
                 )}
 

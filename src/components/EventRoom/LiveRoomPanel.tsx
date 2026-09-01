@@ -32,6 +32,7 @@ import { ActiveBroadcastData, BroadcastService } from "../../services/activitySe
 import { CanonicalLiveSession } from "../../types/liveEventEngine";
 import { LiveEventEngineService } from "../../services/liveEventEngineService";
 import { LiveQuizParticipantView } from "../events/live/LiveQuizParticipantView";
+import { LiveCrosswordParticipantView } from "../events/live/LiveCrosswordParticipantView";
 
 export interface ActiveQuestionData {
   question: string;
@@ -242,7 +243,7 @@ export function LiveRoomPanel({
   };
 
   // =========================================================================
-  // CANONICAL LIVE SESSION ENGINE OVERLAYS (Feature 5C Custom Quiz Integration)
+  // CANONICAL LIVE SESSION ENGINE OVERLAYS (Feature 5C/5D Custom Activities)
   // =========================================================================
   if (
     canonicalLiveSession &&
@@ -253,6 +254,29 @@ export function LiveRoomPanel({
     return (
       <div className="h-full flex flex-col">
         <LiveQuizParticipantView
+          eventId={event.id}
+          activityId={canonicalLiveSession.currentActivityId}
+          session={canonicalLiveSession}
+          participant={{
+            id: currentParticipant?.id || participantId,
+            name: currentParticipant?.name || "Event Participant",
+            college: (currentParticipant as any)?.college || "",
+            department: (currentParticipant as any)?.department || "",
+          }}
+        />
+      </div>
+    );
+  }
+
+  if (
+    canonicalLiveSession &&
+    canonicalLiveSession.status === "active" &&
+    canonicalLiveSession.currentActivityType === "crossword" &&
+    canonicalLiveSession.currentActivityId
+  ) {
+    return (
+      <div className="h-full flex flex-col">
+        <LiveCrosswordParticipantView
           eventId={event.id}
           activityId={canonicalLiveSession.currentActivityId}
           session={canonicalLiveSession}
