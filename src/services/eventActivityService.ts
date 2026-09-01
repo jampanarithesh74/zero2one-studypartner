@@ -21,6 +21,7 @@ export interface EventActivity {
   description?: string;
   order: number;
   status: ActivityStatus;
+  durationSeconds?: number;
   config?: Record<string, any>;
   createdAt?: any;
   updatedAt?: any;

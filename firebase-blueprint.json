@@ -149,6 +149,31 @@
       },
       "required": ["participantId", "participantName"]
     },
+    "CanonicalLiveSession": {
+      "title": "CanonicalLiveSession",
+      "description": "Authoritative single source of truth for real-time live event state and activity sequence orchestration",
+      "type": "object",
+      "properties": {
+        "eventId": { "type": "string" },
+        "hostId": { "type": "string" },
+        "status": { "type": "string", "enum": ["idle", "waiting", "active", "paused", "ended"] },
+        "currentActivityIndex": { "type": "number" },
+        "totalActivities": { "type": "number" },
+        "currentActivityId": { "type": "string" },
+        "currentActivityType": { "type": "string" },
+        "currentActivityTitle": { "type": "string" },
+        "stage": { "type": "string", "enum": ["ready", "running", "frozen", "reveal", "leaderboard", "completed"] },
+        "stageSequenceNumber": { "type": "number" },
+        "activityStartedAt": { "type": "number" },
+        "stageStartedAt": { "type": "number" },
+        "durationSeconds": { "type": "number" },
+        "isFrozen": { "type": "boolean" },
+        "isRevealed": { "type": "boolean" },
+        "stepIndex": { "type": "number" },
+        "totalSteps": { "type": "number" }
+      },
+      "required": ["eventId", "hostId", "status", "currentActivityIndex", "totalActivities", "stage", "stageSequenceNumber"]
+    },
     "Participant": {
       "title": "Participant",
       "description": "Participant profile record inside an event room and waiting room",
@@ -194,6 +219,42 @@
         "updatedAt": { "type": "string" }
       },
       "required": ["id", "eventId", "title", "eventCode", "ownerId", "status", "acceptingParticipants"]
+    },
+    "GenericQuizQuestion": {
+      "title": "GenericQuizQuestion",
+      "description": "Custom event quiz question item with options and points",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "questionId": { "type": "string" },
+        "activityId": { "type": "string" },
+        "eventId": { "type": "string" },
+        "order": { "type": "number" },
+        "text": { "type": "string" },
+        "options": { "type": "array", "items": { "type": "string" } },
+        "correctOptionIndex": { "type": "number" },
+        "timeLimitSec": { "type": "number" },
+        "points": { "type": "number" },
+        "explanation": { "type": "string" }
+      },
+      "required": ["id", "order", "text", "options", "correctOptionIndex", "points"]
+    },
+    "QuizSubmission": {
+      "title": "QuizSubmission",
+      "description": "Participant atomic submission record for a quiz question",
+      "type": "object",
+      "properties": {
+        "participantId": { "type": "string" },
+        "participantName": { "type": "string" },
+        "participantPhoto": { "type": "string" },
+        "questionId": { "type": "string" },
+        "selectedOptionIndex": { "type": "number" },
+        "isCorrect": { "type": "boolean" },
+        "pointsAwarded": { "type": "number" },
+        "timeTakenSec": { "type": "number" },
+        "submittedAt": { "type": "number" }
+      },
+      "required": ["participantId", "questionId", "selectedOptionIndex", "isCorrect", "pointsAwarded"]
     }
   },
   "firestore": {
@@ -244,6 +305,26 @@
     "events/{eventId}/activities/quiz/responses/{participantId}": {
       "schema": "QuizResponse",
       "description": "Participant submitted quiz responses"
+    },
+    "events/{eventId}/liveSession/current": {
+      "schema": "CanonicalLiveSession",
+      "description": "Authoritative canonical live session broadcast state"
+    },
+    "events/{eventId}/activities/{activityId}/questions/{questionId}": {
+      "schema": "GenericQuizQuestion",
+      "description": "Ordered questions configured for an activity"
+    },
+    "events/{eventId}/activities/{activityId}/submissions/{submissionId}": {
+      "schema": "QuizSubmission",
+      "description": "Participant question submissions"
+    },
+    "events/{eventId}/activities/{activityId}/responses/{participantId}": {
+      "schema": "QuizResponse",
+      "description": "Participant response record aggregate"
+    },
+    "events/{eventId}/activities/{activityId}/leaderboard/{participantId}": {
+      "schema": "QuizLeaderboardEntry",
+      "description": "Participant standings entry"
     }
   }
 }

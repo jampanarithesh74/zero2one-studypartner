@@ -23,6 +23,7 @@ import { db } from "../../lib/firebase";
 import { EventItem } from "../PublicEventPage";
 import { Participant } from "../ParticipantOnboarding";
 import { BroadcastService, ActiveBroadcastData } from "../../services/activityService";
+import { LiveEventEngineService } from "../../services/liveEventEngineService";
 
 export function EventWaitingRoomPage() {
   const { eventId } = useParams<{ eventId: string }>();
@@ -126,6 +127,13 @@ export function EventWaitingRoomPage() {
   useEffect(() => {
     if (!eventId) return;
 
+    // Listen to canonical live session: events/{eventId}/liveSession/current
+    const unsubLiveSession = LiveEventEngineService.subscribeLiveSession(eventId, (session) => {
+      if (session && session.status === "active") {
+        setIsEventLive(true);
+      }
+    });
+
     // Listen to active broadcast document: events/{eventId}/activities/activeBroadcast
     const unsubBroadcast = BroadcastService.subscribe(eventId, (data) => {
       setActiveBroadcast(data);
@@ -153,6 +161,7 @@ export function EventWaitingRoomPage() {
     );
 
     return () => {
+      unsubLiveSession();
       unsubBroadcast();
       unsubEvent();
     };

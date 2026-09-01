@@ -596,19 +596,20 @@ export function EventsHostPreflightPublishPage() {
                       <div className="pt-1 flex flex-col sm:flex-row gap-3">
                         <button
                           type="button"
-                          onClick={() => window.open(`/events/${eventId}/waiting`, "_blank")}
-                          className="flex-1 py-3 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-black font-extrabold text-xs uppercase tracking-wider transition-all duration-200 cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20"
+                          onClick={() => navigate(`/events/host/events/${eventId}/live`)}
+                          className="flex-1 py-3 px-4 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-extrabold text-xs uppercase tracking-wider transition-all duration-200 cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-orange-500/25"
                         >
-                          <Users size={15} />
-                          <span>View Waiting Room ↗</span>
+                          <Radio size={15} className="animate-pulse" />
+                          <span>OPEN LIVE CONTROL DECK</span>
                         </button>
 
                         <button
                           type="button"
-                          onClick={() => navigate("/events/host/dashboard")}
-                          className="py-3 px-4 rounded-xl bg-neutral-900 hover:bg-neutral-850 text-neutral-300 hover:text-white border border-neutral-800 text-xs font-bold uppercase tracking-wider transition-all cursor-pointer text-center"
+                          onClick={() => window.open(`/events/${eventId}/waiting`, "_blank")}
+                          className="py-3 px-4 rounded-xl bg-neutral-900 hover:bg-neutral-850 text-neutral-300 hover:text-white border border-neutral-800 text-xs font-bold uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5 text-center"
                         >
-                          Dashboard
+                          <Users size={14} className="text-emerald-400" />
+                          <span>Waiting Room ↗</span>
                         </button>
                       </div>
                     </div>

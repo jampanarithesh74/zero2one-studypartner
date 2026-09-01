@@ -558,11 +558,11 @@ export function EventsHostDashboardPage() {
 
                 <button
                   type="button"
-                  onClick={() => navigate(`/events/${ev.id}/waiting`)}
-                  className="px-4 py-2 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 shadow-md shadow-orange-500/10"
+                  onClick={() => navigate(`/events/host/events/${ev.id}/live`)}
+                  className="px-4 py-2 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 shadow-md shadow-orange-500/20"
                 >
-                  <Play size={13} />
-                  <span>Waiting Room</span>
+                  <Radio size={13} className="animate-pulse" />
+                  <span>Host Live Deck</span>
                 </button>
               </>
             ) : (

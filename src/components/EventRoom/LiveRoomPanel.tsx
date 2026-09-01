@@ -29,6 +29,9 @@ import { QuizSessionData } from "../../data/quizQuestions";
 import { CrosswordActivityView } from "../events/CrosswordActivityView";
 import { RiddleActivityView } from "../events/RiddleActivityView";
 import { ActiveBroadcastData, BroadcastService } from "../../services/activityService";
+import { CanonicalLiveSession } from "../../types/liveEventEngine";
+import { LiveEventEngineService } from "../../services/liveEventEngineService";
+import { LiveQuizParticipantView } from "../events/live/LiveQuizParticipantView";
 
 export interface ActiveQuestionData {
   question: string;
@@ -63,10 +66,23 @@ export function LiveRoomPanel({
   const [activeQuestion, setActiveQuestion] = useState<ActiveQuestionData | null>(null);
   const [quizSession, setQuizSession] = useState<QuizSessionData | null>(null);
   const [activeBroadcast, setActiveBroadcast] = useState<ActiveBroadcastData | null>(null);
+  const [canonicalLiveSession, setCanonicalLiveSession] = useState<CanonicalLiveSession | null>(null);
   const [answers, setAnswers] = useState<LiveAnswerData[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
 
-  // Listen to Active Broadcast for entire room
+  // 1. Subscribe to Canonical Live Session (Primary Real-Time Source of Truth)
+  useEffect(() => {
+    if (!event.id) return;
+    const unsubLiveSession = LiveEventEngineService.subscribeLiveSession(
+      event.id,
+      (session) => {
+        setCanonicalLiveSession(session);
+      }
+    );
+    return () => unsubLiveSession();
+  }, [event.id]);
+
+  // 2. Listen to Active Broadcast for entire room (Legacy fallback)
   useEffect(() => {
     if (!event.id) return;
     const unsubBroadcast = BroadcastService.subscribe(event.id, (data) => {
@@ -75,7 +91,7 @@ export function LiveRoomPanel({
     return () => unsubBroadcast();
   }, [event.id]);
 
-  // Listen to Quiz Session in Firestore
+  // 3. Listen to Quiz Session in Firestore (Legacy fallback)
   useEffect(() => {
     if (!event.id) return;
 
@@ -224,6 +240,32 @@ export function LiveRoomPanel({
       setIsSubmitting(false);
     }
   };
+
+  // =========================================================================
+  // CANONICAL LIVE SESSION ENGINE OVERLAYS (Feature 5C Custom Quiz Integration)
+  // =========================================================================
+  if (
+    canonicalLiveSession &&
+    canonicalLiveSession.status === "active" &&
+    canonicalLiveSession.currentActivityType === "quiz" &&
+    canonicalLiveSession.currentActivityId
+  ) {
+    return (
+      <div className="h-full flex flex-col">
+        <LiveQuizParticipantView
+          eventId={event.id}
+          activityId={canonicalLiveSession.currentActivityId}
+          session={canonicalLiveSession}
+          participant={{
+            id: currentParticipant?.id || participantId,
+            name: currentParticipant?.name || "Event Participant",
+            college: (currentParticipant as any)?.college || "",
+            department: (currentParticipant as any)?.department || "",
+          }}
+        />
+      </div>
+    );
+  }
 
   if (quizSession && quizSession.status === "running") {
     return <QuizModeCard eventId={event.id} currentParticipant={currentParticipant} quizSession={quizSession} />;

@@ -27,6 +27,7 @@ import { EventsHostQuizBuilderPage } from "./components/events/EventsHostQuizBui
 import { EventsHostCrosswordBuilderPage } from "./components/events/EventsHostCrosswordBuilderPage";
 import { EventsHostRiddleBuilderPage } from "./components/events/EventsHostRiddleBuilderPage";
 import { EventsHostPreflightPublishPage } from "./components/events/EventsHostPreflightPublishPage";
+import { EventsHostLiveControlPage } from "./components/events/EventsHostLiveControlPage";
 import { EventsHostPlaceholderPage } from "./components/events/EventsHostPlaceholderPage";
 import { EventsListingPage } from "./components/events/EventsListingPage";
 import { EventWaitingRoomPage } from "./components/events/EventWaitingRoomPage";
@@ -5591,6 +5592,8 @@ export default function App() {
                 <Route path="/events/host/events/:eventId/activities/:activityId/riddle-builder" element={<EventsHostRiddleBuilderPage />} />
                 <Route path="/events/host/events/:eventId/publish" element={<EventsHostPreflightPublishPage />} />
                 <Route path="/events/host/events/:eventId/preflight" element={<EventsHostPreflightPublishPage />} />
+                <Route path="/events/host/events/:eventId/live" element={<EventsHostLiveControlPage />} />
+                <Route path="/events/host/events/:eventId/live-control" element={<EventsHostLiveControlPage />} />
                 <Route path="/events/list" element={<EventsListingPage currentUserEmail={user?.email} currentUserId={user?.uid} isAdmin={isAdmin} />} />
                 
                 {/* Event Participant & Room Routes */}
