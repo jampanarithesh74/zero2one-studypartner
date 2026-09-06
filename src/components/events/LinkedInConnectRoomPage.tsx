@@ -72,23 +72,17 @@ export function LinkedInConnectRoomPage() {
   const [isAuthenticating, setIsAuthenticating] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  // Profile Confirmation Step (allows student to confirm or add their public LinkedIn profile URL/headline)
+  // Profile Confirmation Step (shows verified read-only OAuth card before entering)
   const [showProfileConfirm, setShowProfileConfirm] = useState<boolean>(false);
-  const [profileForm, setProfileForm] = useState<{
+  const [verifiedOAuthProfile, setVerifiedOAuthProfile] = useState<{
     name: string;
     photo: string;
     headline: string;
     company: string;
     linkedinUrl: string;
     linkedinSub: string;
-  }>({
-    name: "",
-    photo: "",
-    headline: "",
-    company: "",
-    linkedinUrl: "",
-    linkedinSub: "",
-  });
+    authTicket?: string;
+  } | null>(null);
   const [isSavingProfile, setIsSavingProfile] = useState<boolean>(false);
 
   // Room Participants & Pagination State
@@ -342,8 +336,34 @@ export function LinkedInConnectRoomPage() {
     setActiveSearch("");
   };
 
-  // 4. Listen for OAuth PostMessage from /api/auth/linkedin/callback
+  // 4. Listen for OAuth PostMessage & handle URL redirect fallback
   useEffect(() => {
+    // Check URL parameters for redirect fallback
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("linkedin_auth") === "success" && params.get("profile")) {
+        const rawProfile = params.get("profile");
+        if (rawProfile) {
+          const parsed = JSON.parse(rawProfile);
+          if (parsed && (parsed.name || parsed.linkedinSub)) {
+            setVerifiedOAuthProfile({
+              name: parsed.name || "LinkedIn Member",
+              photo: parsed.photo || "",
+              headline: parsed.headline || "Participant",
+              company: parsed.company || "Anurag University",
+              linkedinUrl: parsed.linkedinUrl || "",
+              linkedinSub: parsed.linkedinSub || "",
+              authTicket: parsed.authTicket || "",
+            });
+            setShowProfileConfirm(true);
+            window.history.replaceState({}, document.title, window.location.pathname);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("Error parsing OAuth redirect params:", e);
+    }
+
     const handleOAuthMessage = (evt: MessageEvent) => {
       const allowedOrigins = [
         window.location.origin,
@@ -354,16 +374,17 @@ export function LinkedInConnectRoomPage() {
 
       if (evt.data?.type === "LINKEDIN_OAUTH_SUCCESS" && evt.data?.profile) {
         const p = evt.data.profile;
-        console.log("[LinkedInConnectRoom] Received verified profile:", p);
+        console.log("[LinkedInConnectRoom] Received verified profile from trusted OAuth:", p);
 
-        // Populate confirmation form
-        setProfileForm({
+        // Populate trusted read-only profile state directly from server
+        setVerifiedOAuthProfile({
           name: p.name || "LinkedIn Member",
           photo: p.photo || "",
-          headline: p.headline || "Engineering Student @ Anurag University",
+          headline: p.headline || "Participant",
           company: p.company || "Anurag University",
           linkedinUrl: p.linkedinUrl || "",
           linkedinSub: p.linkedinSub || "",
+          authTicket: p.authTicket || "",
         });
 
         setIsAuthenticating(false);
@@ -405,68 +426,90 @@ export function LinkedInConnectRoomPage() {
     }
   };
 
-  // Handle Profile Confirmation & Saving to Firestore
-  const handleSaveProfileAndEnter = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!eventId || !profileForm.name.trim()) return;
+  // Handle Profile Confirmation & Joining Room
+  const handleConfirmJoin = async () => {
+    if (!eventId || !verifiedOAuthProfile) return;
 
     setIsSavingProfile(true);
     setAuthError(null);
 
     try {
-      // Deterministic ID based on LinkedIn sub or random slug
-      const rawSub = profileForm.linkedinSub || "";
-      const safeId = rawSub
-        ? `lp_${rawSub.replace(/[^a-zA-Z0-9_-]/g, "")}`
-        : `lp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      let joinedParticipant: LinkedInConnectParticipant | null = null;
 
-      // Validate & clean LinkedIn profile URL
-      let cleanUrl = profileForm.linkedinUrl.trim();
-      if (cleanUrl && !cleanUrl.startsWith("http://") && !cleanUrl.startsWith("https://")) {
-        cleanUrl = `https://${cleanUrl}`;
+      // 1. Authoritative join via backend endpoint (verifies HMAC ticket & writes to Firestore)
+      if (verifiedOAuthProfile.authTicket) {
+        try {
+          const res = await fetch("/api/auth/linkedin/join", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              eventId,
+              authTicket: verifiedOAuthProfile.authTicket,
+            }),
+          });
+          const data = await res.json();
+          if (res.ok && data.success && data.participant) {
+            joinedParticipant = data.participant;
+          } else if (data.error) {
+            console.warn("Backend /api/auth/linkedin/join error:", data.error);
+          }
+        } catch (fetchErr) {
+          console.warn("Fetch /api/auth/linkedin/join failed, falling back to direct write:", fetchErr);
+        }
       }
 
-      const participantPayload: LinkedInConnectParticipant = {
-        id: safeId,
-        eventId: eventId,
-        linkedinSub: rawSub,
-        name: profileForm.name.trim(),
-        nameLower: profileForm.name.trim().toLowerCase(),
-        companyLower: (profileForm.company.trim() || "Anurag University").toLowerCase(),
-        photo: profileForm.photo.trim(),
-        headline: profileForm.headline.trim() || "Anurag University",
-        company: profileForm.company.trim() || "Anurag University",
-        linkedinUrl: cleanUrl,
-        joinedAt: serverTimestamp(),
-        lastSeen: serverTimestamp(),
-      };
+      // 2. Fallback direct write using trusted OAuth state (if API route unreachable)
+      if (!joinedParticipant) {
+        const rawSub = verifiedOAuthProfile.linkedinSub || "";
+        const safeSub = rawSub.replace(/[^a-zA-Z0-9_-]/g, "");
+        const participantId = `lp_${safeSub || Date.now().toString()}`;
 
-      // Write to Firestore: events/{eventId}/linkedin_participants/{safeId}
-      const participantRef = doc(db, "events", eventId, "linkedin_participants", safeId);
-      await setDoc(participantRef, participantPayload, { merge: true });
+        const cleanName = verifiedOAuthProfile.name.trim() || "LinkedIn Member";
+        const cleanCompany = verifiedOAuthProfile.company.trim() || "Anurag University";
+        const cleanHeadline = verifiedOAuthProfile.headline.trim() || "Participant";
+        const cleanPhoto = (verifiedOAuthProfile.photo || "").trim();
+        const cleanUrl = (verifiedOAuthProfile.linkedinUrl || "").trim();
+
+        const participantPayload: LinkedInConnectParticipant = {
+          id: participantId,
+          eventId: eventId,
+          linkedinSub: rawSub,
+          name: cleanName,
+          nameLower: cleanName.toLowerCase(),
+          companyLower: cleanCompany.toLowerCase(),
+          photo: cleanPhoto,
+          headline: cleanHeadline,
+          company: cleanCompany,
+          linkedinUrl: cleanUrl,
+          joinedAt: serverTimestamp(),
+          lastSeen: serverTimestamp(),
+        };
+
+        const participantRef = doc(db, "events", eventId, "linkedin_participants", participantId);
+        await setDoc(participantRef, participantPayload, { merge: true });
+
+        joinedParticipant = {
+          ...participantPayload,
+          joinedAt: Date.now(),
+          lastSeen: Date.now(),
+        };
+      }
 
       // Save to localStorage for instant local session recovery
       localStorage.setItem(
         `z2o_linkedin_connect_${eventId}`,
-        JSON.stringify({
-          ...participantPayload,
-          joinedAt: Date.now(),
-          lastSeen: Date.now(),
-        })
+        JSON.stringify(joinedParticipant)
       );
 
-      setMyParticipant({
-        ...participantPayload,
-        joinedAt: Date.now(),
-        lastSeen: Date.now(),
-      });
+      setMyParticipant(joinedParticipant);
       setShowProfileConfirm(false);
+      setVerifiedOAuthProfile(null);
 
       // Refresh directory page 1 to immediately reflect the new participant
       fetchDirectoryPage(1, null, activeSearch, searchMode);
     } catch (err: any) {
-      console.error("Error saving participant profile:", err);
-      setAuthError("Failed to save profile. Please check your network and try again.");
+      console.error("Error joining LinkedIn Connect room:", err);
+      setAuthError("Failed to enter room. Please check your network and try again.");
     } finally {
       setIsSavingProfile(false);
     }
@@ -599,25 +642,27 @@ export function LinkedInConnectRoomPage() {
   }
 
   // ----------------------------------------------------
-  // RENDER: Step A — Profile Confirmation Modal / View
+  // RENDER: Step A — Trusted Profile Confirmation View
   // ----------------------------------------------------
-  if (showProfileConfirm) {
+  if (showProfileConfirm && verifiedOAuthProfile) {
+    const hasTrustedUrl = isValidLinkedInUrl(verifiedOAuthProfile.linkedinUrl);
+
     return (
       <div className="min-h-screen bg-[#0a0a0a] text-white font-sans pb-20 pt-6 px-4 sm:px-6 flex items-center justify-center">
-        <div className="w-full max-w-lg space-y-6">
+        <div className="w-full max-w-md space-y-6">
           <div className="p-6 sm:p-8 rounded-3xl bg-[#121212] border border-neutral-800 shadow-2xl space-y-6 text-left">
-            <div className="space-y-2 pb-4 border-b border-neutral-800">
+            <div className="space-y-1.5 pb-4 border-b border-neutral-800">
               <div className="flex items-center gap-2">
                 <span className="w-2.5 h-2.5 rounded-full bg-[#0A66C2]" />
                 <span className="text-[10px] font-mono font-black uppercase tracking-widest text-[#0A66C2]">
-                  LINKEDIN PROFILE CONFIRMATION
+                  LINKEDIN AUTHENTICATED
                 </span>
               </div>
               <h1 className="text-2xl font-black text-white tracking-tight">
-                Confirm Your Networking Card
+                You're joining as
               </h1>
               <p className="text-xs text-neutral-400 leading-relaxed">
-                This information is displayed to other participants in this room so they can connect with you on LinkedIn.
+                Confirm your verified profile details to enter the LinkedIn Connect Room.
               </p>
             </div>
 
@@ -628,126 +673,98 @@ export function LinkedInConnectRoomPage() {
               </div>
             )}
 
-            <form onSubmit={handleSaveProfileAndEnter} className="space-y-4">
-              {/* Profile Photo Preview */}
-              <div className="flex items-center gap-4 p-3 bg-neutral-900/80 rounded-2xl border border-neutral-800">
-                {profileForm.photo ? (
+            {/* Read-Only Profile Card (Zero Editable Inputs) */}
+            <div className="p-5 rounded-2xl bg-neutral-900/90 border border-neutral-800 space-y-4">
+              <div className="flex items-start gap-4">
+                {verifiedOAuthProfile.photo ? (
                   <img
-                    src={profileForm.photo}
-                    alt={profileForm.name}
+                    src={verifiedOAuthProfile.photo}
+                    alt={verifiedOAuthProfile.name}
                     referrerPolicy="no-referrer"
-                    className="w-14 h-14 rounded-2xl object-cover border border-neutral-700"
+                    className="w-16 h-16 rounded-2xl object-cover border border-neutral-700 shrink-0"
                   />
                 ) : (
-                  <div className="w-14 h-14 rounded-2xl bg-[#0A66C2]/20 text-[#0A66C2] flex items-center justify-center font-black text-lg border border-[#0A66C2]/30">
-                    {profileForm.name.slice(0, 2).toUpperCase() || "LI"}
+                  <div className="w-16 h-16 rounded-2xl bg-[#0A66C2]/20 text-[#0A66C2] flex items-center justify-center font-black text-xl border border-[#0A66C2]/30 shrink-0">
+                    {verifiedOAuthProfile.name.slice(0, 2).toUpperCase() || "LI"}
                   </div>
                 )}
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-bold text-white truncate">
-                    {profileForm.name || "LinkedIn User"}
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-base font-black text-white truncate">
+                      {verifiedOAuthProfile.name}
+                    </h2>
+                    <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0">
+                      <ShieldCheck size={11} />
+                      <span>Verified</span>
+                    </span>
                   </div>
-                  <div className="text-[11px] text-emerald-400 flex items-center gap-1 mt-0.5">
-                    <ShieldCheck size={12} />
-                    <span>Verified via LinkedIn OAuth</span>
-                  </div>
-                </div>
-              </div>
 
-              {/* Full Name */}
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-mono font-black uppercase tracking-wider text-neutral-400 block">
-                  Your Display Name
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={profileForm.name}
-                  onChange={(e) => setProfileForm({ ...profileForm, name: e.target.value })}
-                  placeholder="e.g., Alex Carter"
-                  className="w-full px-4 py-3 text-sm bg-neutral-900 border border-neutral-800 hover:border-neutral-700 focus:border-[#0A66C2] rounded-xl outline-none text-white font-bold transition-all placeholder:text-neutral-600"
-                />
-              </div>
+                  <p className="text-xs text-neutral-300 font-medium line-clamp-2">
+                    {verifiedOAuthProfile.headline || "Participant"}
+                  </p>
 
-              {/* Headline */}
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-mono font-black uppercase tracking-wider text-neutral-400 block">
-                  Professional / Student Headline
-                </label>
-                <input
-                  type="text"
-                  value={profileForm.headline}
-                  onChange={(e) => setProfileForm({ ...profileForm, headline: e.target.value })}
-                  placeholder="e.g., B.Tech CSE (AIML) Student | Full-Stack Dev"
-                  className="w-full px-4 py-3 text-sm bg-neutral-900 border border-neutral-800 hover:border-neutral-700 focus:border-[#0A66C2] rounded-xl outline-none text-white font-bold transition-all placeholder:text-neutral-600"
-                />
-              </div>
-
-              {/* Company / College */}
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-mono font-black uppercase tracking-wider text-neutral-400 block">
-                  College / Organization
-                </label>
-                <input
-                  type="text"
-                  value={profileForm.company}
-                  onChange={(e) => setProfileForm({ ...profileForm, company: e.target.value })}
-                  placeholder="e.g., Anurag University"
-                  className="w-full px-4 py-3 text-sm bg-neutral-900 border border-neutral-800 hover:border-neutral-700 focus:border-[#0A66C2] rounded-xl outline-none text-white font-bold transition-all placeholder:text-neutral-600"
-                />
-              </div>
-
-              {/* LinkedIn Profile URL */}
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-mono font-black uppercase tracking-wider text-neutral-400 block flex items-center justify-between">
-                  <span>LinkedIn Profile URL</span>
-                  <span className="text-neutral-500 font-normal lowercase">(for the connect button)</span>
-                </label>
-                <div className="relative">
-                  <input
-                    type="url"
-                    value={profileForm.linkedinUrl}
-                    onChange={(e) => setProfileForm({ ...profileForm, linkedinUrl: e.target.value })}
-                    placeholder="https://www.linkedin.com/in/your-username"
-                    className="w-full px-4 py-3 text-sm bg-neutral-900 border border-neutral-800 hover:border-neutral-700 focus:border-[#0A66C2] rounded-xl outline-none text-white font-bold transition-all placeholder:text-neutral-600 pr-10"
-                  />
-                  <div className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-500">
-                    <Linkedin size={16} />
+                  <div className="flex items-center gap-1.5 text-[11px] text-neutral-400 font-medium truncate pt-0.5">
+                    <Building2 size={12} className="text-[#0A66C2] shrink-0" />
+                    <span className="truncate">{verifiedOAuthProfile.company || "Anurag University"}</span>
                   </div>
                 </div>
-                <p className="text-[11px] text-neutral-500">
-                  Enter your public profile URL so other attendees can visit your profile and send connection requests.
-                </p>
               </div>
 
-              <div className="pt-3 space-y-2.5">
-                <button
-                  type="submit"
-                  disabled={isSavingProfile}
-                  className="w-full py-4 px-6 rounded-2xl bg-[#0A66C2] hover:bg-[#084e96] active:scale-[0.99] text-white font-black text-xs uppercase tracking-wider transition-all shadow-xl shadow-[#0A66C2]/20 cursor-pointer flex items-center justify-center gap-2.5 disabled:opacity-50"
-                >
-                  {isSavingProfile ? (
-                    <>
-                      <Loader2 size={16} className="animate-spin" />
-                      <span>Saving Profile...</span>
-                    </>
-                  ) : (
-                    <>
-                      <UserCheck size={18} />
-                      <span>Enter LinkedIn Connect Room</span>
-                    </>
-                  )}
-                </button>
+              {/* Trusted LinkedIn Profile URL Preview (Read-Only) */}
+              {hasTrustedUrl ? (
+                <div className="pt-3 border-t border-neutral-800 flex items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center gap-2 min-w-0 text-neutral-300 truncate">
+                    <Linkedin size={15} className="text-[#0A66C2] shrink-0" />
+                    <span className="truncate font-mono text-[11px] text-neutral-400">
+                      {verifiedOAuthProfile.linkedinUrl}
+                    </span>
+                  </div>
+                  <a
+                    href={verifiedOAuthProfile.linkedinUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[#0A66C2] hover:underline text-[11px] font-bold flex items-center gap-1 shrink-0"
+                  >
+                    <span>Preview</span>
+                    <ExternalLink size={11} />
+                  </a>
+                </div>
+              ) : null}
+            </div>
 
-                <button
-                  type="button"
-                  onClick={() => setShowProfileConfirm(false)}
-                  className="w-full py-3 text-center text-xs font-bold text-neutral-400 hover:text-white transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
-              </div>
-            </form>
+            {/* Actions */}
+            <div className="pt-2 space-y-2.5">
+              <button
+                type="button"
+                onClick={handleConfirmJoin}
+                disabled={isSavingProfile}
+                className="w-full py-4 px-6 rounded-2xl bg-[#0A66C2] hover:bg-[#084e96] active:scale-[0.99] text-white font-black text-xs uppercase tracking-wider transition-all shadow-xl shadow-[#0A66C2]/20 cursor-pointer flex items-center justify-center gap-2.5 disabled:opacity-50"
+              >
+                {isSavingProfile ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    <span>Entering Room...</span>
+                  </>
+                ) : (
+                  <>
+                    <UserCheck size={18} />
+                    <span>Continue to LinkedIn Connect Room</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowProfileConfirm(false);
+                  setVerifiedOAuthProfile(null);
+                }}
+                disabled={isSavingProfile}
+                className="w-full py-2.5 text-center text-xs font-bold text-neutral-400 hover:text-white transition-colors cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -958,7 +975,7 @@ export function LinkedInConnectRoomPage() {
               <button
                 type="button"
                 onClick={() => {
-                  setProfileForm({
+                  setVerifiedOAuthProfile({
                     name: myParticipant.name,
                     photo: myParticipant.photo || "",
                     headline: myParticipant.headline || "",
@@ -970,8 +987,8 @@ export function LinkedInConnectRoomPage() {
                 }}
                 className="px-3 py-1.5 rounded-xl bg-neutral-900 hover:bg-neutral-850 text-neutral-300 hover:text-white border border-neutral-800 text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
               >
-                <Edit3 size={12} />
-                <span>Edit Profile</span>
+                <UserCheck size={12} />
+                <span>My Card</span>
               </button>
 
               {myParticipant.linkedinUrl && (

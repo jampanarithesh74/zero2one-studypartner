@@ -11,6 +11,7 @@ import healthHandler from "./api/health";
 import linkedinStatusHandler from "./api/auth/linkedin/status";
 import linkedinStartHandler from "./api/auth/linkedin/start";
 import linkedinCallbackHandler from "./api/auth/linkedin/callback";
+import linkedinJoinHandler from "./api/auth/linkedin/join";
 import uploadHandler from "./api/upload";
 import parseSyllabusPdfHandler from "./api/parse-syllabus-pdf";
 
@@ -78,6 +79,7 @@ app.get("/api/health", wrapVercelHandler(healthHandler));
 app.get("/api/auth/linkedin/status", wrapVercelHandler(linkedinStatusHandler));
 app.get("/api/auth/linkedin/start", wrapVercelHandler(linkedinStartHandler));
 app.get("/api/auth/linkedin/callback", wrapVercelHandler(linkedinCallbackHandler));
+app.post("/api/auth/linkedin/join", wrapVercelHandler(linkedinJoinHandler));
 
 // Supabase File Upload Route (Express handles multer file buffer conversion)
 app.post("/api/upload", upload.single("file"), async (req, res, next) => {

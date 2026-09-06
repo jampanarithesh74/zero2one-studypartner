@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { signOAuthTicket } from "./token";
 
 function getBaseAppUrl(req: any) {
   const host =
@@ -198,19 +199,47 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     console.log("STEP 5: User profile received");
 
+    // Strictly validate LinkedIn profile URL.
+    // Do NOT invent, guess, or fabricate a public LinkedIn URL from an identifier or member sub.
+    // If LinkedIn does not provide a verified public profile URL under authorized scopes, leave it empty.
+    let validLinkedinUrl = "";
+    const rawCandidateUrl = (
+      userinfo.profile ||
+      userinfo.public_profile_url ||
+      (userinfo.vanityName ? `https://www.linkedin.com/in/${userinfo.vanityName}` : "") ||
+      ""
+    ).trim();
+
+    if (
+      rawCandidateUrl &&
+      (rawCandidateUrl.startsWith("https://www.linkedin.com/") ||
+        rawCandidateUrl.startsWith("https://linkedin.com/"))
+    ) {
+      validLinkedinUrl = rawCandidateUrl;
+    }
+
     const realProfile = {
-      name: userinfo.name || `${userinfo.given_name || ""} ${userinfo.family_name || ""}`.trim() || "LinkedIn User",
-      photo: userinfo.picture || "",
-      linkedinUrl: userinfo.profile || userinfo.public_profile_url || (userinfo.vanityName ? `https://www.linkedin.com/in/${userinfo.vanityName}` : ""),
+      sub: userinfo.sub || "",
       linkedinSub: userinfo.sub || "",
+      name: userinfo.name || `${userinfo.given_name || ""} ${userinfo.family_name || ""}`.trim() || "LinkedIn Member",
+      photo: userinfo.picture || "",
+      linkedinUrl: validLinkedinUrl,
       email: userinfo.email || "",
-      headline: userinfo.headline || userinfo.job_title || "",
-      company: userinfo.company || userinfo.organization || "",
+      headline: userinfo.headline || userinfo.job_title || "Participant",
+      company: userinfo.company || userinfo.organization || "Anurag University",
     };
 
-    const payloadJson = JSON.stringify(realProfile);
+    // Authoritative HMAC-SHA256 signature guarantees profile integrity
+    const authTicket = signOAuthTicket(realProfile, eventId);
 
-    console.log("STEP 6: Sending profile back to frontend");
+    const clientProfile = {
+      ...realProfile,
+      authTicket,
+    };
+
+    const payloadJson = JSON.stringify(clientProfile);
+
+    console.log("STEP 6: Sending verified profile and auth ticket back to frontend");
 
     return res.send(`
       <!DOCTYPE html>

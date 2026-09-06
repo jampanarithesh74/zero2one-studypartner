@@ -143,6 +143,14 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    function isValidLinkedInParticipant(p, eventId) {
+      return p.name is string && p.name.size() > 0 && p.name.size() <= 100 &&
+             (!('headline' in p) || (p.headline is string && p.headline.size() <= 250)) &&
+             (!('company' in p) || (p.company is string && p.company.size() <= 150)) &&
+             (!('linkedinUrl' in p) || (p.linkedinUrl is string && p.linkedinUrl.size() <= 500 && (p.linkedinUrl == '' || p.linkedinUrl.matches('^https://([a-zA-Z0-9-]+\\.)?linkedin\\.com/.*$')))) &&
+             (!('eventId' in p) || p.eventId == eventId);
+    }
+
     match /events/{eventId} {
       allow read, list: if true; // Public access to published events
       allow create: if isSignedIn() && (
@@ -165,7 +173,7 @@ service cloud.firestore {
 
       match /linkedin_participants/{participantId} {
         allow read, list: if true;
-        allow create, update: if true;
+        allow create, update: if isValidLinkedInParticipant(request.resource.data, eventId);
         allow delete: if isAdmin() || (isSignedIn() && get(/databases/$(database)/documents/events/$(eventId)).data.ownerId == request.auth.uid);
       }
 
