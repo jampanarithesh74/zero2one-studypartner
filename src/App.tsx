@@ -38,6 +38,8 @@ import { ParticipantProfilePage } from "./components/events/ParticipantProfilePa
 import { AdminEventDashboardPage } from "./components/events/AdminEventDashboardPage";
 import { LiveWallPage } from "./components/events/LiveWallPage";
 import { UnauthorizedAdminPage } from "./components/events/UnauthorizedAdminPage";
+import { LinkedInConnectRoomPage } from "./components/events/LinkedInConnectRoomPage";
+import { EventsHostLinkedInConnectPage } from "./components/events/EventsHostLinkedInConnectPage";
 
 type ViewState = "year-selection" | "dept-selection" | "sem-selection" | "choice-selection" | "syllabus-view" | "resources-view" | "onboarding" | "login" | "syllabus-copy-view" | "dashboard" | "profile-page" | "tools-page" | "public-event-page";
 
@@ -5594,6 +5596,7 @@ export default function App() {
                 <Route path="/events/host/events/:eventId/preflight" element={<EventsHostPreflightPublishPage />} />
                 <Route path="/events/host/events/:eventId/live" element={<EventsHostLiveControlPage />} />
                 <Route path="/events/host/events/:eventId/live-control" element={<EventsHostLiveControlPage />} />
+                <Route path="/events/host/events/:eventId/linkedin-connect" element={<EventsHostLinkedInConnectPage />} />
                 <Route path="/events/list" element={<EventsListingPage currentUserEmail={user?.email} currentUserId={user?.uid} isAdmin={isAdmin} />} />
                 
                 {/* Event Participant & Room Routes */}
@@ -5602,6 +5605,7 @@ export default function App() {
                 <Route path="/events/:eventId/waiting" element={<EventWaitingRoomPage />} />
                 <Route path="/events/:eventId/onboarding" element={<ParticipantOnboardingPage />} />
                 <Route path="/events/:eventId/room" element={<EventRoomPage currentUserEmail={user?.email} currentUserId={user?.uid} isAdmin={isAdmin} />} />
+                <Route path="/events/:eventId/linkedin-connect" element={<LinkedInConnectRoomPage />} />
                 <Route path="/events/:eventId/admin" element={isAdmin ? <AdminEventDashboardPage currentUserEmail={user?.email} currentUserId={user?.uid} isAdmin={isAdmin} /> : <UnauthorizedAdminPage />} />
                 <Route path="/events/:eventId/live-wall" element={isAdmin ? <LiveWallPage isAdmin={isAdmin} /> : <UnauthorizedAdminPage />} />
                 <Route path="/events/:eventId/participant/:participantId" element={<ParticipantProfilePage />} />

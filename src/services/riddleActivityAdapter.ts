@@ -64,7 +64,12 @@ export interface RiddleQuestionStats {
   totalSubmissions: number;
   correctCount: number;
   incorrectCount: number;
+  recentSubmissions?: Array<{ id?: string; userAnswer: string; isCorrect: boolean; participantName?: string }>;
 }
+
+export type RiddleSubmissionStats = RiddleQuestionStats;
+
+export type { GenericRiddleEntry };
 
 export interface RiddleLeaderboardEntry {
   participantId: string;
@@ -278,6 +283,8 @@ export const RiddleActivityAdapter = {
         let incorrectCount = 0;
         let total = 0;
 
+        const recentSubmissions: Array<{ id?: string; userAnswer: string; isCorrect: boolean; participantName?: string }> = [];
+
         snapshot.forEach((docSnap) => {
           const data = docSnap.data() as RiddleSubmission;
           if (data) {
@@ -287,6 +294,14 @@ export const RiddleActivityAdapter = {
             } else {
               incorrectCount++;
             }
+            if (data.userAnswer) {
+              recentSubmissions.push({
+                id: docSnap.id,
+                userAnswer: data.userAnswer,
+                isCorrect: !!data.isCorrect,
+                participantName: data.participantName,
+              });
+            }
           }
         });
 
@@ -295,6 +310,7 @@ export const RiddleActivityAdapter = {
           totalSubmissions: total,
           correctCount,
           incorrectCount,
+          recentSubmissions,
         });
       },
       (error) => {

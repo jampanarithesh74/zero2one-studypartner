@@ -116,8 +116,13 @@ export function ParticipantJoinPage() {
       try {
         const snap = await getDoc(doc(db, "events", eventId));
         if (snap.exists()) {
+          const evData = { id: snap.id, ...snap.data() } as EventItem;
+          if (evData.roomType === "linkedin_connect") {
+            navigate(`/events/${eventId}/linkedin-connect`, { replace: true });
+            return;
+          }
           if (isMounted) {
-            setEvent({ id: snap.id, ...snap.data() } as EventItem);
+            setEvent(evData);
             setLoading(false);
           }
         } else {

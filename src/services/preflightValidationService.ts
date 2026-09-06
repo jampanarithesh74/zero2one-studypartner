@@ -212,12 +212,18 @@ export async function runEventPreflightValidation(
 
   // 5. Room Type Configuration
   const roomType = eventData.roomType;
-  if (roomType === "normal" || roomType === "linkedin") {
+  if (roomType === "normal" || roomType === "linkedin" || roomType === "linkedin_connect") {
     checks.push({
       id: "room-type",
       category: "room",
       title: "Room Type Setup",
-      description: `Configured as ${roomType === "linkedin" ? "LinkedIn Professional Room" : "Standard Interactive Room"}.`,
+      description: `Configured as ${
+        roomType === "linkedin_connect"
+          ? "LinkedIn Connect Room (Networking Only)"
+          : roomType === "linkedin"
+          ? "LinkedIn Professional Room"
+          : "Standard Interactive Room"
+      }.`,
       status: "pass",
     });
   } else {
@@ -227,11 +233,20 @@ export async function runEventPreflightValidation(
       title: "Room Type Setup",
       description: "Room format must be selected before publishing.",
       status: "fail",
-      errorMessage: "Room type has not been configured. Please select Normal or LinkedIn room in Room Setup.",
+      errorMessage: "Room type has not been configured. Please select Normal, LinkedIn, or LinkedIn Connect room in Room Setup.",
     });
   }
 
   // 6. Activities Fetch & Sequence Integrity
+  if (roomType === "linkedin_connect") {
+    checks.push({
+      id: "activities-count",
+      category: "activities",
+      title: "Networking Room Configuration",
+      description: "LinkedIn Connect Room is a networking-only room. Participants connect with each other through LinkedIn. No gameplay activities or questions are required.",
+      status: "pass",
+    });
+  } else {
   let activities: EventActivity[] = [];
   try {
     activities = await getEventActivities(eventId);
@@ -545,6 +560,7 @@ export async function runEventPreflightValidation(
         }
       }
     }
+  }
   }
 
   const failedChecks = checks.filter((c) => c.status === "fail").length;

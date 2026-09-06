@@ -449,9 +449,12 @@ export const CrosswordActivityAdapter = {
   subscribeCrosswordLeaderboard(
     eventId: string,
     activityId: string,
-    limitCount: number = 10,
-    callback: (entries: CrosswordLeaderboardEntry[]) => void
+    limitCountOrCallback: number | ((entries: CrosswordLeaderboardEntry[]) => void) = 10,
+    optionalCallback?: (entries: CrosswordLeaderboardEntry[]) => void
   ): Unsubscribe {
+    const callback = typeof limitCountOrCallback === "function" ? limitCountOrCallback : optionalCallback || (() => {});
+    const limitCount = typeof limitCountOrCallback === "number" ? limitCountOrCallback : 10;
+
     if (!eventId || !activityId) {
       callback([]);
       return () => {};

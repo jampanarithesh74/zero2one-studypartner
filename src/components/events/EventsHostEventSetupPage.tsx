@@ -26,8 +26,9 @@ import {
 } from "lucide-react";
 import { auth, db, ALLOWED_ADMIN_EMAILS } from "../../lib/firebase";
 import { EventJoinQRCode } from "./EventJoinQRCode";
+import { Linkedin } from "lucide-react";
 
-export type RoomTypeOption = "normal" | "linkedin";
+export type RoomTypeOption = "normal" | "linkedin" | "linkedin_connect";
 
 interface EventData {
   id: string;
@@ -136,7 +137,7 @@ export function EventsHostEventSetupPage() {
 
         setEventData(data);
         // Pre-select existing room type if configured
-        if (data.roomType === "linkedin" || data.roomType === "normal") {
+        if (data.roomType === "linkedin" || data.roomType === "normal" || data.roomType === "linkedin_connect") {
           setSelectedRoomType(data.roomType);
         } else {
           setSelectedRoomType("normal");
@@ -481,7 +482,7 @@ export function EventsHostEventSetupPage() {
                   </p>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   {/* OPTION 1: NORMAL ROOM */}
                   <div
                     onClick={() => setSelectedRoomType("normal")}
@@ -587,7 +588,69 @@ export function EventsHostEventSetupPage() {
                       {selectedRoomType === "linkedin" ? "Selected" : "Select"}
                     </button>
                   </div>
+
+                  {/* OPTION 3: LINKEDIN CONNECT ROOM */}
+                  <div
+                    onClick={() => setSelectedRoomType("linkedin_connect")}
+                    className={`relative rounded-2xl p-5 border transition-all duration-200 cursor-pointer text-left flex flex-col justify-between space-y-4 ${
+                      selectedRoomType === "linkedin_connect"
+                        ? "bg-[#16161e] border-[#0A66C2] ring-1 ring-[#0A66C2]/50 shadow-lg shadow-[#0A66C2]/10"
+                        : "bg-[#111116] border-neutral-800 hover:border-neutral-700 hover:bg-[#14141a]"
+                    }`}
+                  >
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${
+                          selectedRoomType === "linkedin_connect"
+                            ? "bg-[#0A66C2]/20 text-[#0A66C2] border border-[#0A66C2]/30"
+                            : "bg-neutral-850 text-neutral-400 border border-neutral-750"
+                        }`}>
+                          <Linkedin size={18} />
+                        </div>
+
+                        {selectedRoomType === "linkedin_connect" && (
+                          <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-[#0A66C2]/20 text-[#0A66C2] border border-[#0A66C2]/30 flex items-center gap-1">
+                            <Check size={11} className="stroke-[3]" />
+                            <span>Selected</span>
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="space-y-1">
+                        <h3 className="text-sm font-black text-white uppercase tracking-tight">
+                          LINKEDIN CONNECT ROOM
+                        </h3>
+                        <p className="text-xs text-neutral-400 leading-relaxed font-normal">
+                          Networking-only room — participants connect with each other through LinkedIn. No activities or gameplay.
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedRoomType("linkedin_connect");
+                      }}
+                      className={`w-full py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition-all duration-200 cursor-pointer ${
+                        selectedRoomType === "linkedin_connect"
+                          ? "bg-[#0A66C2] text-white shadow-sm"
+                          : "bg-neutral-850 hover:bg-neutral-800 text-neutral-300 hover:text-white border border-neutral-750"
+                      }`}
+                    >
+                      {selectedRoomType === "linkedin_connect" ? "Selected" : "Select"}
+                    </button>
+                  </div>
                 </div>
+
+                {selectedRoomType === "linkedin_connect" && (
+                  <div className="p-3.5 rounded-2xl bg-[#0A66C2]/10 border border-[#0A66C2]/30 text-left text-xs text-blue-200 flex items-start gap-2.5">
+                    <Linkedin size={16} className="text-[#0A66C2] shrink-0 mt-0.5" />
+                    <span>
+                      <strong>Networking-only room:</strong> participants connect with each other through LinkedIn. No activities or gameplay.
+                    </span>
+                  </div>
+                )}
               </div>
 
               {/* Status Note */}

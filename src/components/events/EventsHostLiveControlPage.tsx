@@ -56,6 +56,8 @@ import { LiveCrosswordHostView } from "./live/LiveCrosswordHostView";
 import { GenericRiddleEntry } from "../../services/riddleBuilderService";
 import { RiddleActivityAdapter } from "../../services/riddleActivityAdapter";
 import { LiveRiddleHostView } from "./live/LiveRiddleHostView";
+import { FinalResultsService } from "../../services/finalResultsService";
+import { FinalEventResultsSummary } from "../../types/finalResults";
 
 interface EventDocData {
   id: string;
@@ -122,6 +124,9 @@ export function EventsHostLiveControlPage() {
   // Custom Riddle Activity State
   const [riddles, setRiddles] = useState<GenericRiddleEntry[]>([]);
   const [isLoadingRiddles, setIsLoadingRiddles] = useState<boolean>(false);
+
+  // Final Results State
+  const [finalResults, setFinalResults] = useState<FinalEventResultsSummary | null>(null);
 
   // 1. Auth Listener
   useEffect(() => {
@@ -447,6 +452,29 @@ export function EventsHostLiveControlPage() {
 
     return () => unsub();
   }, [eventId, currentActivityId, currentActivityType, liveSession?.stage]);
+
+  // Subscribe to Final Results when event is completed
+  useEffect(() => {
+    if (!eventId || !isEventCompleted) return;
+
+    let isMounted = true;
+    const unsub = FinalResultsService.subscribeFinalResults(eventId, (summary) => {
+      if (isMounted && summary) {
+        setFinalResults(summary);
+      }
+    });
+
+    FinalResultsService.calculateFinalResults(eventId).then((summary) => {
+      if (isMounted && summary) {
+        setFinalResults(summary);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      unsub();
+    };
+  }, [eventId, isEventCompleted]);
 
   // Load Riddle entries when active activity is "riddle"
   useEffect(() => {

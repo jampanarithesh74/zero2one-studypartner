@@ -38,7 +38,8 @@ import {
   FolderOpen,
   Send,
   CheckCircle2,
-  Play
+  Play,
+  Linkedin
 } from "lucide-react";
 import { auth, db, ALLOWED_ADMIN_EMAILS } from "../../lib/firebase";
 import { generateUniqueEventCode } from "../../lib/eventCodeService";
@@ -57,7 +58,7 @@ export interface HostEventItem {
   startDate?: string;
   endDate?: string;
   status: string;
-  roomType: "normal" | "linkedin";
+  roomType: "normal" | "linkedin" | "linkedin_connect";
   acceptingParticipants: boolean;
   ownerId: string;
   createdBy?: string;
@@ -174,7 +175,7 @@ export function EventsHostDashboardPage() {
             startDate: data.startDate || "",
             endDate: data.endDate || "",
             status: (data.status || "draft").toLowerCase(),
-            roomType: (data.roomType || "normal") as "normal" | "linkedin",
+            roomType: (data.roomType || "normal") as "normal" | "linkedin" | "linkedin_connect",
             acceptingParticipants: !!data.acceptingParticipants,
             ownerId: data.ownerId || uid,
             createdBy: data.createdBy || "",
@@ -452,8 +453,18 @@ export function EventsHostDashboardPage() {
                 {ev.status.toUpperCase()}
               </span>
 
-              <span className="text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full bg-neutral-850 text-neutral-300 border border-neutral-750">
-                {ev.roomType === "linkedin" ? "LINKEDIN ROOM" : "NORMAL ROOM"}
+              <span
+                className={`text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full border ${
+                  ev.roomType === "linkedin_connect"
+                    ? "bg-[#0A66C2]/15 text-[#0A66C2] border-[#0A66C2]/30"
+                    : "bg-neutral-850 text-neutral-300 border-neutral-750"
+                }`}
+              >
+                {ev.roomType === "linkedin_connect"
+                  ? "LINKEDIN CONNECT ROOM"
+                  : ev.roomType === "linkedin"
+                  ? "LINKEDIN ROOM"
+                  : "NORMAL ROOM"}
               </span>
             </div>
 
@@ -515,15 +526,17 @@ export function EventsHostDashboardPage() {
                   <span>Setup</span>
                 </button>
 
-                <button
-                  type="button"
-                  onClick={() => navigate(`/events/host/events/${ev.id}/activities`)}
-                  className="px-3.5 py-2 rounded-xl bg-neutral-850 hover:bg-neutral-800 text-neutral-300 hover:text-white border border-neutral-750 font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5"
-                  title="Configure Activities Sequence"
-                >
-                  <Layers size={13} />
-                  <span>Activities</span>
-                </button>
+                {ev.roomType !== "linkedin_connect" && (
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/events/host/events/${ev.id}/activities`)}
+                    className="px-3.5 py-2 rounded-xl bg-neutral-850 hover:bg-neutral-800 text-neutral-300 hover:text-white border border-neutral-750 font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5"
+                    title="Configure Activities Sequence"
+                  >
+                    <Layers size={13} />
+                    <span>Activities</span>
+                  </button>
+                )}
 
                 <button
                   type="button"
@@ -538,14 +551,16 @@ export function EventsHostDashboardPage() {
               </>
             ) : ev.status === "published" ? (
               <>
-                <button
-                  type="button"
-                  onClick={() => navigate(`/events/host/events/${ev.id}/activities`)}
-                  className="px-3.5 py-2 rounded-xl bg-neutral-850 hover:bg-neutral-800 text-neutral-300 hover:text-white border border-neutral-750 font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5"
-                >
-                  <Layers size={13} />
-                  <span>Activities</span>
-                </button>
+                {ev.roomType !== "linkedin_connect" && (
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/events/host/events/${ev.id}/activities`)}
+                    className="px-3.5 py-2 rounded-xl bg-neutral-850 hover:bg-neutral-800 text-neutral-300 hover:text-white border border-neutral-750 font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Layers size={13} />
+                    <span>Activities</span>
+                  </button>
+                )}
 
                 <button
                   type="button"
@@ -556,14 +571,25 @@ export function EventsHostDashboardPage() {
                   <span>Publish Settings</span>
                 </button>
 
-                <button
-                  type="button"
-                  onClick={() => navigate(`/events/host/events/${ev.id}/live`)}
-                  className="px-4 py-2 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 shadow-md shadow-orange-500/20"
-                >
-                  <Radio size={13} className="animate-pulse" />
-                  <span>Host Live Deck</span>
-                </button>
+                {ev.roomType === "linkedin_connect" ? (
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/events/host/events/${ev.id}/linkedin-connect`)}
+                    className="px-4 py-2 rounded-xl bg-[#0A66C2] hover:bg-[#084e96] text-white font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 shadow-md shadow-[#0A66C2]/20"
+                  >
+                    <Linkedin size={13} />
+                    <span>Connect Host Deck</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/events/host/events/${ev.id}/live`)}
+                    className="px-4 py-2 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 shadow-md shadow-orange-500/20"
+                  >
+                    <Radio size={13} className="animate-pulse" />
+                    <span>Host Live Deck</span>
+                  </button>
+                )}
               </>
             ) : (
               <button

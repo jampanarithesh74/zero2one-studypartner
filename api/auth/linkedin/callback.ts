@@ -201,9 +201,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const realProfile = {
       name: userinfo.name || `${userinfo.given_name || ""} ${userinfo.family_name || ""}`.trim() || "LinkedIn User",
       photo: userinfo.picture || "",
-      linkedinUrl: "",
+      linkedinUrl: userinfo.profile || userinfo.public_profile_url || (userinfo.vanityName ? `https://www.linkedin.com/in/${userinfo.vanityName}` : ""),
       linkedinSub: userinfo.sub || "",
       email: userinfo.email || "",
+      headline: userinfo.headline || userinfo.job_title || "",
+      company: userinfo.company || userinfo.organization || "",
     };
 
     const payloadJson = JSON.stringify(realProfile);

@@ -596,20 +596,32 @@ export function EventsHostPreflightPublishPage() {
                       <div className="pt-1 flex flex-col sm:flex-row gap-3">
                         <button
                           type="button"
-                          onClick={() => navigate(`/events/host/events/${eventId}/live`)}
+                          onClick={() => {
+                            if (eventData?.roomType === "linkedin_connect") {
+                              navigate(`/events/host/events/${eventId}/linkedin-connect`);
+                            } else {
+                              navigate(`/events/host/events/${eventId}/live`);
+                            }
+                          }}
                           className="flex-1 py-3 px-4 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-extrabold text-xs uppercase tracking-wider transition-all duration-200 cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-orange-500/25"
                         >
                           <Radio size={15} className="animate-pulse" />
-                          <span>OPEN LIVE CONTROL DECK</span>
+                          <span>{eventData?.roomType === "linkedin_connect" ? "OPEN CONNECT HOST DECK" : "OPEN LIVE CONTROL DECK"}</span>
                         </button>
 
                         <button
                           type="button"
-                          onClick={() => window.open(`/events/${eventId}/waiting`, "_blank")}
+                          onClick={() => {
+                            if (eventData?.roomType === "linkedin_connect") {
+                              window.open(`/events/${eventId}/linkedin-connect`, "_blank");
+                            } else {
+                              window.open(`/events/${eventId}/waiting`, "_blank");
+                            }
+                          }}
                           className="py-3 px-4 rounded-xl bg-neutral-900 hover:bg-neutral-850 text-neutral-300 hover:text-white border border-neutral-800 text-xs font-bold uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5 text-center"
                         >
                           <Users size={14} className="text-emerald-400" />
-                          <span>Waiting Room ↗</span>
+                          <span>{eventData?.roomType === "linkedin_connect" ? "Networking Room ↗" : "Waiting Room ↗"}</span>
                         </button>
                       </div>
                     </div>

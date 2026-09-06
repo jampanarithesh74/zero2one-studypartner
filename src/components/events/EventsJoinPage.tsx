@@ -164,7 +164,14 @@ export function EventsJoinPage() {
         return;
       }
 
-      // 5. Successful validation - Pre-fill existing local session details if present
+      // 5. Successful validation - If LinkedIn Connect Room, direct straight to the networking room
+      if (eventData.roomType === "linkedin_connect") {
+        setValidatingCode(false);
+        navigate(`/events/${eventData.id}/linkedin-connect`);
+        return;
+      }
+
+      // Pre-fill existing local session details if present
       setValidatedEvent(eventData);
 
       try {

@@ -34,6 +34,7 @@ import { LiveEventEngineService } from "../../services/liveEventEngineService";
 import { LiveQuizParticipantView } from "../events/live/LiveQuizParticipantView";
 import { LiveCrosswordParticipantView } from "../events/live/LiveCrosswordParticipantView";
 import { LiveRiddleParticipantView } from "../events/live/LiveRiddleParticipantView";
+import { ParticipantFinalResultsView } from "./ParticipantFinalResultsView";
 
 export interface ActiveQuestionData {
   question: string;
@@ -244,8 +245,23 @@ export function LiveRoomPanel({
   };
 
   // =========================================================================
-  // CANONICAL LIVE SESSION ENGINE OVERLAYS (Feature 5C/5D Custom Activities)
+  // CANONICAL LIVE SESSION ENGINE OVERLAYS (Feature 5C/5D/6A Custom Activities & Final Results)
   // =========================================================================
+  if (
+    canonicalLiveSession &&
+    (canonicalLiveSession.status === "ended" || canonicalLiveSession.stage === "completed")
+  ) {
+    return (
+      <div className="h-full flex flex-col">
+        <ParticipantFinalResultsView
+          eventId={event.id}
+          eventTitle={event.title || (event as any).name || "Live Event"}
+          currentParticipant={currentParticipant}
+        />
+      </div>
+    );
+  }
+
   if (
     canonicalLiveSession &&
     canonicalLiveSession.status === "active" &&

@@ -30,7 +30,8 @@ import {
   RotateCcw,
   AlertTriangle,
   GripVertical,
-  Send
+  Send,
+  Linkedin
 } from "lucide-react";
 import { auth, db, ALLOWED_ADMIN_EMAILS } from "../../lib/firebase";
 import {
@@ -671,7 +672,38 @@ export function EventsHostActivitiesPage() {
               </div>
 
               {/* Activities Section Card */}
-              <div className="bg-[#0e0e12] border border-neutral-800/90 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6">
+              {eventData.roomType === "linkedin_connect" ? (
+                <div className="bg-[#0e0e12] border border-[#0A66C2]/30 rounded-3xl p-8 sm:p-12 shadow-2xl space-y-6 text-center">
+                  <div className="w-16 h-16 rounded-2xl bg-[#0A66C2]/15 border border-[#0A66C2]/30 flex items-center justify-center mx-auto text-[#0A66C2]">
+                    <Linkedin size={32} />
+                  </div>
+                  <div className="space-y-2 max-w-md mx-auto">
+                    <h2 className="text-xl font-black text-white uppercase tracking-tight">
+                      No Activities Needed
+                    </h2>
+                    <p className="text-xs text-neutral-400 leading-relaxed">
+                      This event is configured as a <strong>LinkedIn Connect Room</strong> — a networking-only room where participants connect with each other through LinkedIn. No quizzes, crosswords, riddles, or gameplay activities are required.
+                    </p>
+                  </div>
+                  <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => handleSafeNavigate(`/events/host/events/${eventId}/setup`)}
+                      className="w-full sm:w-auto px-5 py-3 rounded-xl bg-neutral-900 hover:bg-neutral-850 text-neutral-300 hover:text-white border border-neutral-800 font-bold text-xs uppercase tracking-wider transition-all cursor-pointer"
+                    >
+                      Change Room Type
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSafeNavigate(`/events/host/events/${eventId}/publish`)}
+                      className="w-full sm:w-auto px-6 py-3 rounded-xl bg-[#0A66C2] hover:bg-[#084e96] active:scale-[0.99] text-white font-bold text-xs uppercase tracking-wider transition-all duration-200 cursor-pointer shadow-lg shadow-[#0A66C2]/20"
+                    >
+                      Proceed to Pre-flight &amp; Publish →
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-[#0e0e12] border border-neutral-800/90 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-neutral-850">
                   <div className="space-y-0.5">
                     <h2 className="text-base font-black text-white uppercase tracking-tight flex items-center gap-2">
@@ -940,6 +972,7 @@ export function EventsHostActivitiesPage() {
                   </button>
                 </div>
               </div>
+              )}
             </motion.div>
           )}
         </div>

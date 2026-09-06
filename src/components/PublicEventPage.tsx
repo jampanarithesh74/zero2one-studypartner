@@ -30,7 +30,7 @@ export interface EventItem {
   endDate: string;
   status: "active" | "upcoming" | "completed";
   eventType: "public" | "internal";
-  roomType?: "linkedin" | "normal";
+  roomType?: "linkedin" | "normal" | "linkedin_connect";
   participantCount?: number;
   createdBy: string;
   createdAt?: any;

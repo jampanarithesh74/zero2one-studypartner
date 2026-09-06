@@ -163,6 +163,12 @@ service cloud.firestore {
         allow delete: if isAdmin();
       }
 
+      match /linkedin_participants/{participantId} {
+        allow read, list: if true;
+        allow create, update: if true;
+        allow delete: if isAdmin() || (isSignedIn() && get(/databases/$(database)/documents/events/$(eventId)).data.ownerId == request.auth.uid);
+      }
+
       match /liveRoom/{docId} {
         allow read, list: if true;
         allow create, update, delete: if true;

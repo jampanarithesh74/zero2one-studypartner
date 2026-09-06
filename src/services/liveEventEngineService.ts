@@ -24,6 +24,7 @@ import {
   LiveSequenceItem,
 } from "../types/liveEventEngine";
 import { getEventActivities, EventActivity } from "./eventActivityService";
+import { FinalResultsService } from "./finalResultsService";
 
 export interface LiveEngineValidationResult {
   isEligible: boolean;
@@ -475,6 +476,13 @@ export const LiveEventEngineService = {
       }
     });
 
+    if (!hasNext) {
+      // Async final results aggregation
+      FinalResultsService.calculateFinalResults(eventId).catch((err) => {
+        console.warn("[LiveEventEngineService] Async final results calculation warning:", err);
+      });
+    }
+
     return { hasNext, nextActivityTitle: nextTitle };
   },
 
@@ -545,6 +553,11 @@ export const LiveEventEngineService = {
         stageSequenceNumber: current.stageSequenceNumber + 1,
         updatedAt: serverTimestamp(),
       });
+    });
+
+    // Async final results aggregation
+    FinalResultsService.calculateFinalResults(eventId).catch((err) => {
+      console.warn("[LiveEventEngineService] Async final results calculation warning on complete:", err);
     });
   },
 
