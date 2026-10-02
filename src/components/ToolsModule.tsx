@@ -56,25 +56,53 @@ export function ToolsModule({
     const decoded = decodeURIComponent(deptUri).trim();
     const DEPT_KEYS = Object.keys(SYLLABUS_MAP);
     if (DEPT_KEYS.includes(decoded)) return decoded;
-    
+    const upperUri = decoded.toUpperCase();
+
+    const exactAliasMap: Record<string, string> = {
+      "101": "Civil Engineering",
+      "CIVIL": "Civil Engineering",
+      "CE": "Civil Engineering",
+      "102": "Electrical & Electronics Engineering",
+      "EEE": "Electrical & Electronics Engineering",
+      "103": "Mechanical Engineering",
+      "ME": "Mechanical Engineering",
+      "MECH": "Mechanical Engineering",
+      "MECHANICAL": "Mechanical Engineering",
+      "104": "Electronics & Communication Engineering",
+      "ECE": "Electronics & Communication Engineering",
+      "105": "Computer Science and Engineering",
+      "CSE": "Computer Science and Engineering",
+      "106": "Artificial Intelligence",
+      "AI": "Artificial Intelligence",
+      "107": "Artificial Intelligence & Machine Learning",
+      "AIML": "Artificial Intelligence & Machine Learning",
+      "AI & ML": "Artificial Intelligence & Machine Learning",
+      "AI&ML": "Artificial Intelligence & Machine Learning",
+      "109": "CSE (Cyber Security)",
+      "CS": "CSE (Cyber Security)",
+      "CYBER SECURITY": "CSE (Cyber Security)",
+      "CSE (CYBER SECURITY)": "CSE (Cyber Security)",
+      "110": "CSE (Data Science)",
+      "DATA SCIENCE": "CSE (Data Science)",
+      "DS": "CSE (Data Science)",
+      "CSE (DATA SCIENCE)": "CSE (Data Science)",
+      "112": "Information Technology",
+      "IT": "Information Technology",
+      "INFORMATION TECHNOLOGY": "Information Technology"
+    };
+
+    if (exactAliasMap[upperUri]) {
+      return exactAliasMap[upperUri];
+    }
+
     const cleanUri = decoded.toLowerCase().replace(/[-_]/g, " ");
-    const found = DEPT_KEYS.find(d => {
+    const exactMatch = DEPT_KEYS.find(d => d.toLowerCase() === cleanUri);
+    if (exactMatch) return exactMatch;
+
+    const sortedKeys = [...DEPT_KEYS].sort((a, b) => b.length - a.length);
+    const found = sortedKeys.find(d => {
       const cleanD = d.toLowerCase();
-      const upperUri = decoded.toUpperCase();
-      return cleanD === cleanUri || 
-             cleanD.startsWith(cleanUri) || 
-             cleanUri.startsWith(cleanD) ||
-             (upperUri === "CSE" && d === "Computer Science and Engineering") ||
-             (upperUri === "CS" && d === "Computer Science and Engineering") ||
-             (upperUri === "IT" && d === "Information Technology") ||
-             (upperUri === "AI" && d === "Artificial Intelligence") ||
-             (upperUri === "AIML" && d === "Artificial Intelligence & Machine Learning") ||
-             (upperUri === "DATA SCIENCE" && d === "CSE (Data Science)") ||
-             (upperUri === "CYBER SECURITY" && d === "CSE (Cyber Security)") ||
-             (upperUri === "EEE" && d === "Electrical & Electronics Engineering") ||
-             (upperUri === "ECE" && d === "Electronics & Communication Engineering") ||
-             (upperUri === "ME" && d === "Mechanical Engineering") ||
-             (upperUri === "CE" && d === "Civil Engineering");
+      return cleanD.startsWith(cleanUri) || cleanUri.startsWith(cleanD);
     });
     return found || "Information Technology";
   };

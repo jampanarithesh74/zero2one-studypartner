@@ -133,24 +133,54 @@ export default function App() {
     if (!deptUri) return null;
     const decoded = decodeURIComponent(deptUri).trim();
     if (DEPARTMENTS.includes(decoded)) return decoded;
+    const upperUri = decoded.toUpperCase();
+
+    const exactAliasMap: Record<string, string> = {
+      "101": "Civil Engineering",
+      "CIVIL": "Civil Engineering",
+      "CE": "Civil Engineering",
+      "102": "Electrical & Electronics Engineering",
+      "EEE": "Electrical & Electronics Engineering",
+      "103": "Mechanical Engineering",
+      "ME": "Mechanical Engineering",
+      "MECH": "Mechanical Engineering",
+      "MECHANICAL": "Mechanical Engineering",
+      "104": "Electronics & Communication Engineering",
+      "ECE": "Electronics & Communication Engineering",
+      "105": "Computer Science and Engineering",
+      "CSE": "Computer Science and Engineering",
+      "106": "Artificial Intelligence",
+      "AI": "Artificial Intelligence",
+      "107": "Artificial Intelligence & Machine Learning",
+      "AIML": "Artificial Intelligence & Machine Learning",
+      "AI & ML": "Artificial Intelligence & Machine Learning",
+      "AI&ML": "Artificial Intelligence & Machine Learning",
+      "109": "CSE (Cyber Security)",
+      "CS": "CSE (Cyber Security)",
+      "CYBER SECURITY": "CSE (Cyber Security)",
+      "CSE (CYBER SECURITY)": "CSE (Cyber Security)",
+      "110": "CSE (Data Science)",
+      "DATA SCIENCE": "CSE (Data Science)",
+      "DS": "CSE (Data Science)",
+      "CSE (DATA SCIENCE)": "CSE (Data Science)",
+      "112": "Information Technology",
+      "IT": "Information Technology",
+      "INFORMATION TECHNOLOGY": "Information Technology"
+    };
+
+    if (exactAliasMap[upperUri]) {
+      return exactAliasMap[upperUri];
+    }
+
     const cleanUri = decoded.toLowerCase().replace(/[-_]/g, " ");
-    const found = DEPARTMENTS.find(d => {
+    const exactMatch = DEPARTMENTS.find(d => d.toLowerCase() === cleanUri);
+    if (exactMatch) return exactMatch;
+
+    // Sort longer department names first so "Artificial Intelligence & Machine Learning" is checked before "Artificial Intelligence"
+    const sortedDepts = [...DEPARTMENTS].sort((a, b) => b.length - a.length);
+    const found = sortedDepts.find(d => {
       const cleanD = d.toLowerCase();
-      const upperUri = decoded.toUpperCase();
-      return cleanD === cleanUri || 
-             cleanD.startsWith(cleanUri) || 
-             cleanUri.startsWith(cleanD) ||
-             (upperUri === "CSE" && d === "Computer Science and Engineering") ||
-             (upperUri === "CS" && d === "Computer Science and Engineering") ||
-             (upperUri === "IT" && d === "Information Technology") ||
-             (upperUri === "AI" && d === "Artificial Intelligence") ||
-             (upperUri === "AIML" && (d === "Artificial Intelligence & Machine Learning" || d.includes("Machine Learning"))) ||
-             (upperUri === "DATA SCIENCE" && d === "CSE (Data Science)") ||
-             (upperUri === "CYBER SECURITY" && d === "CSE (Cyber Security)") ||
-             (upperUri === "EEE" && d === "Electrical & Electronics Engineering") ||
-             (upperUri === "ECE" && d === "Electronics & Communication Engineering") ||
-             (upperUri === "ME" && d === "Mechanical Engineering") ||
-             (upperUri === "CE" && d === "Civil Engineering");
+      return cleanD.startsWith(cleanUri) || cleanUri.startsWith(cleanD);
     });
     return found || null;
   };
@@ -353,9 +383,14 @@ export default function App() {
       if (matchDeptNotes) {
         setIsRoute404(false);
         const rawDept = matchDeptNotes.params.dept;
-        const resolvedDept = resolveDepartment(rawDept);
+        const resolvedDept = resolveDepartment(rawDept) || resolveDepartment(userProfile?.departmentName || userProfile?.departmentCode);
         if (resolvedDept) {
           setSelectedDept(resolvedDept);
+        }
+        if (!selectedSem) {
+          const fallbackYr = selectedYear || userProfile?.effectiveAcademicYear || 1;
+          setSelectedSem(fallbackYr * 2 - 1);
+          setSelectedYear(fallbackYr);
         }
         setActiveSubject(null);
         setExpandedUnit(null);
@@ -388,10 +423,11 @@ export default function App() {
           return;
         }
 
-        const found = findSubjectByCode(rawCode, selectedDept);
+        const preferDept = selectedDept || resolveDepartment(userProfile?.departmentName || userProfile?.departmentCode);
+        const found = findSubjectByCode(rawCode, preferDept);
         if (found) {
-          if (!selectedDept && found.department) {
-            setSelectedDept(found.department);
+          if (!selectedDept && (preferDept || found.department)) {
+            setSelectedDept(preferDept || found.department);
           }
           if (found.semester) {
             setSelectedSem(found.semester);
@@ -453,9 +489,14 @@ export default function App() {
       if (matchDeptPyqs) {
         setIsRoute404(false);
         const rawDept = matchDeptPyqs.params.dept;
-        const resolvedDept = resolveDepartment(rawDept);
+        const resolvedDept = resolveDepartment(rawDept) || resolveDepartment(userProfile?.departmentName || userProfile?.departmentCode);
         if (resolvedDept) {
           setSelectedDept(resolvedDept);
+        }
+        if (!selectedSem) {
+          const fallbackYr = selectedYear || userProfile?.effectiveAcademicYear || 1;
+          setSelectedSem(fallbackYr * 2 - 1);
+          setSelectedYear(fallbackYr);
         }
         setActiveSubject(null);
         setExpandedUnit(null);
@@ -488,10 +529,11 @@ export default function App() {
           return;
         }
 
-        const found = findSubjectByCode(rawCode, selectedDept);
+        const preferDept = selectedDept || resolveDepartment(userProfile?.departmentName || userProfile?.departmentCode);
+        const found = findSubjectByCode(rawCode, preferDept);
         if (found) {
-          if (!selectedDept && found.department) {
-            setSelectedDept(found.department);
+          if (!selectedDept && (preferDept || found.department)) {
+            setSelectedDept(preferDept || found.department);
           }
           if (found.semester) {
             setSelectedSem(found.semester);
@@ -2467,7 +2509,7 @@ export default function App() {
   const handleResourcesQuickAction = () => {
     if (userProfile) {
       const yr = userProfile.effectiveAcademicYear || 1;
-      const dept = userProfile.departmentName;
+      const dept = resolveDepartment(userProfile.departmentName) || resolveDepartment(userProfile.departmentCode) || userProfile.departmentName;
       navigate(`/year/${yr}/department/${encodeURIComponent(dept)}`);
     } else {
       navigate("/");
@@ -3843,7 +3885,7 @@ export default function App() {
             
             <div className="flex flex-col text-left sm:text-right">
               <span className="text-[9px] md:text-[10px] font-extrabold uppercase tracking-widest text-orange-500 line-clamp-1">{selectedDept} // NOTES</span>
-              <span className="text-xs md:text-sm font-bold text-neutral-900 mt-0.5">Year 01 // Semester 0{selectedSem}</span>
+              <span className="text-xs md:text-sm font-bold text-neutral-900 mt-0.5">Year 0{selectedYear || Math.ceil((selectedSem || 1) / 2)} // Semester 0{selectedSem || 1}</span>
             </div>
           </div>
         </header>
@@ -5004,7 +5046,7 @@ export default function App() {
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        navigate(`/subject/${subject.code}/resources`);
+                                        navigate(`/subject/${encodeURIComponent(selectedDept || "all")}/${subject.code}/resources`);
                                       }}
                                       className="w-full py-2.5 rounded-xl bg-orange-500 text-white hover:bg-orange-600 active:scale-[0.98] transition-all text-xs font-bold shadow-sm shadow-orange-500/10 hover:shadow-orange-500/20 cursor-pointer flex items-center justify-center gap-2"
                                     >
@@ -5073,7 +5115,7 @@ export default function App() {
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               onClick={() => {
-                if (subjects.length > 0) navigate(`/subject/${subjects[0].code}`);
+                if (subjects.length > 0) navigate(`/subject/${encodeURIComponent(selectedDept || "all")}/${subjects[0].code}`);
               }}
               className="px-6 py-3 rounded-full bg-white text-neutral-950 font-bold hover:bg-neutral-50 transition-all text-xs shrink-0 relative z-10 border border-neutral-100 shadow-sm cursor-pointer"
             >
@@ -5108,7 +5150,7 @@ export default function App() {
             
             <div className="flex flex-col text-left sm:text-right">
               <span className="text-[9px] md:text-[10px] font-extrabold uppercase tracking-widest text-orange-500 line-clamp-1">{selectedDept}</span>
-              <span className="text-xs md:text-sm font-bold text-neutral-900 mt-0.5">Year 01 // Semester 0{selectedSem}</span>
+              <span className="text-xs md:text-sm font-bold text-neutral-900 mt-0.5">Year 0{selectedYear || Math.ceil((selectedSem || 1) / 2)} // Semester 0{selectedSem || 1}</span>
             </div>
           </div>
         </header>
