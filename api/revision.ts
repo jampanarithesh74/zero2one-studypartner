@@ -1,13 +1,26 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import crypto from "crypto";
 import fs from "fs";
 import path from "path";
-import { initializeApp as initializeAdminApp, getApps as getAdminApps } from "firebase-admin/app";
+import { cert, initializeApp as initializeAdminApp, getApp as getAdminApp, getApps as getAdminApps } from "firebase-admin/app";
 import { getAuth as getAdminAuth } from "firebase-admin/auth";
+import { getFirestore as getAdminFirestore } from "firebase-admin/firestore";
 import { GoogleGenAI, ThinkingLevel, Type } from "@google/genai";
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024; // 25 MB limit for AI document analysis
 const MAX_REDIRECTS = 6;
 const FETCH_TIMEOUT_MS = 12000;
+const FIRESTORE_CACHE_TIMEOUT_MS = 2500;
+const REVISION_CACHE_COLLECTION = "revision_packs";
+
+const MODEL_FALLBACK_CHAIN: ReadonlyArray<{
+  model: string;
+  thinkingLevel: ThinkingLevel;
+}> = [
+  { model: "gemini-4-hydrogen", thinkingLevel: ThinkingLevel.LOW },
+  { model: "gemini-3.8-flash", thinkingLevel: ThinkingLevel.LOW },
+  { model: "gemini-3.5-flash-lite", thinkingLevel: ThinkingLevel.MINIMAL },
+];
 
 interface RevisionTopic {
   topic: string;
@@ -44,31 +57,128 @@ interface RevisionPack {
   mcqs: RevisionMcq[];
 }
 
-function ensureFirebaseAdmin() {
-  if (getAdminApps().length > 0) return;
-
+function readFirebaseConfig(): { projectId: string; firestoreDatabaseId: string } {
   let projectId =
     process.env.FIREBASE_PROJECT_ID ||
     process.env.VITE_FIREBASE_PROJECT_ID ||
     "";
+  let firestoreDatabaseId = process.env.FIREBASE_DATABASE_ID || "";
 
-  if (!projectId) {
-    const configPath = path.join(process.cwd(), "firebase-applet-config.json");
-    if (fs.existsSync(configPath)) {
-      try {
-        const cfg = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-        if (cfg?.projectId) projectId = cfg.projectId;
-      } catch {
-        // Ignore parse failures
+  const configPath = path.join(process.cwd(), "firebase-applet-config.json");
+  if (fs.existsSync(configPath)) {
+    try {
+      const cfg = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      if (!projectId && cfg?.projectId) projectId = String(cfg.projectId);
+      if (!firestoreDatabaseId && cfg?.firestoreDatabaseId) {
+        firestoreDatabaseId = String(cfg.firestoreDatabaseId);
       }
+    } catch {
+      // Ignore parse failures
+    }
+  }
+
+  return { projectId, firestoreDatabaseId };
+}
+
+function ensureFirebaseAdmin() {
+  if (getAdminApps().length > 0) return getAdminApp();
+
+  const { projectId } = readFirebaseConfig();
+  const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT;
+
+  if (serviceAccountJson) {
+    try {
+      const parsedCred = JSON.parse(serviceAccountJson);
+      return initializeAdminApp({
+        credential: cert(parsedCred),
+        ...(projectId ? { projectId } : {}),
+      });
+    } catch (e) {
+      console.warn("[revision] Invalid FIREBASE_SERVICE_ACCOUNT JSON, falling back to default credentials.");
     }
   }
 
   if (projectId) {
-    initializeAdminApp({ projectId });
-  } else {
-    initializeAdminApp();
+    return initializeAdminApp({ projectId });
   }
+  return initializeAdminApp();
+}
+
+function getRevisionFirestore() {
+  const { projectId, firestoreDatabaseId } = readFirebaseConfig();
+  if (!projectId) return null;
+
+  const app = ensureFirebaseAdmin();
+  if (firestoreDatabaseId && firestoreDatabaseId !== "(default)") {
+    return getAdminFirestore(app, firestoreDatabaseId);
+  }
+  return getAdminFirestore(app);
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    promise
+      .then((val) => {
+        clearTimeout(timer);
+        resolve(val);
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+  });
+}
+
+function normalizeFileUrlForCache(rawUrl: string): string {
+  const trimmed = rawUrl.trim();
+  if (trimmed.startsWith("data:")) {
+    // Hash long data URIs deterministically without storing giant base64 strings as raw keys
+    return `data:${crypto.createHash("sha256").update(trimmed).digest("hex")}`;
+  }
+  try {
+    const urlObj = new URL(trimmed);
+    const host = urlObj.hostname.toLowerCase();
+    if (host === "drive.google.com") {
+      const fileId = extractGoogleDriveFileId(urlObj);
+      if (fileId) return `https://drive.google.com/file/d/${fileId}`;
+    }
+    if (host === "docs.google.com") {
+      const docMatch = urlObj.pathname.match(/\/(document|presentation|spreadsheets)\/d\/([a-zA-Z0-9_-]+)/);
+      if (docMatch) return `https://docs.google.com/${docMatch[1]}/d/${docMatch[2]}`;
+    }
+    urlObj.hash = "";
+    return urlObj.toString();
+  } catch {
+    return trimmed;
+  }
+}
+
+function computeRevisionCacheKey(subject: string, unitTitle: string, normalizedFileUrl: string): string {
+  return crypto
+    .createHash("sha256")
+    .update(
+      JSON.stringify({
+        subject: subject.trim().toLowerCase(),
+        unitTitle: unitTitle.trim().toLowerCase(),
+        fileUrl: normalizedFileUrl,
+      })
+    )
+    .digest("hex");
+}
+
+function isValidRevisionPack(data: any): data is RevisionPack {
+  return (
+    Boolean(data) &&
+    Array.isArray(data.importantTopics) &&
+    Array.isArray(data.importantQuestions) &&
+    Array.isArray(data.quickChecklist) &&
+    Array.isArray(data.mcqs) &&
+    (data.importantTopics.length > 0 ||
+      data.importantQuestions.length > 0 ||
+      data.quickChecklist.length > 0 ||
+      data.mcqs.length > 0)
+  );
 }
 
 function isPrivateOrLocalHostname(hostname: string): boolean {
@@ -491,6 +601,20 @@ function normalizeRevisionPack(raw: any): RevisionPack {
   return { importantTopics, importantQuestions, quickChecklist, mcqs };
 }
 
+function isRetryableModelOverloadError(err: any): boolean {
+  const status = Number(err?.status ?? err?.code ?? 0);
+  if (status === 503 || status === 429) return true;
+  const msg = String(err?.message || "").toUpperCase();
+  return (
+    msg.includes("503") ||
+    msg.includes("429") ||
+    msg.includes("UNAVAILABLE") ||
+    msg.includes("RESOURCE_EXHAUSTED") ||
+    msg.includes("HIGH DEMAND") ||
+    msg.includes("OVERLOADED")
+  );
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const reqStart = Date.now();
 
@@ -525,7 +649,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // Step 2: Validate request payload & server key
-  const { year, dept, sem, subject, unitTitle, fileUrl } = (req.body || {}) as Record<string, any>;
+  const { year, dept, sem, subject, unitTitle, fileUrl, forceRegenerate } = (req.body || {}) as Record<string, any>;
 
   const cleanFileUrl = typeof fileUrl === "string" ? fileUrl.trim() : "";
   const cleanSubject = typeof subject === "string" ? subject.trim() : "Engineering Subject";
@@ -533,6 +657,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const cleanDept = typeof dept === "string" ? dept.trim() : "B.Tech";
   const cleanYear = year !== undefined && year !== null ? String(year).trim() : "";
   const cleanSem = sem !== undefined && sem !== null ? String(sem).trim() : "";
+  const bypassServerCache = forceRegenerate === true;
 
   if (!cleanFileUrl) {
     return res.status(400).json({
@@ -540,6 +665,48 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       code: "MISSING_FILE_URL",
       step: "validation",
     });
+  }
+
+  const normalizedFileUrl = normalizeFileUrlForCache(cleanFileUrl);
+  const cacheKey = computeRevisionCacheKey(cleanSubject, cleanUnitTitle, normalizedFileUrl);
+
+  // Step 2b: Check shared Firestore cache first (unless forceRegenerate: true)
+  let firestoreDb: ReturnType<typeof getRevisionFirestore> = null;
+  try {
+    firestoreDb = getRevisionFirestore();
+  } catch (initErr: any) {
+    console.warn("[revision] Firestore Admin not available:", initErr?.message || initErr);
+  }
+
+  if (firestoreDb && !bypassServerCache) {
+    const cacheStart = Date.now();
+    try {
+      const snap = await withTimeout(
+        firestoreDb.collection(REVISION_CACHE_COLLECTION).doc(cacheKey).get(),
+        FIRESTORE_CACHE_TIMEOUT_MS,
+        "Firestore cache lookup"
+      );
+      if (snap.exists) {
+        const cachedData = snap.data();
+        if (isValidRevisionPack(cachedData?.revisionPack)) {
+          const cachedModel = typeof cachedData?.modelUsed === "string" ? cachedData.modelUsed : "cache";
+          console.log(
+            `[revision] Shared Firestore cache HIT in ${Date.now() - cacheStart}ms (key=${cacheKey.slice(0, 12)}, modelUsed=${cachedModel})`
+          );
+          return res.status(200).json({
+            revisionPack: cachedData.revisionPack,
+            modelUsed: cachedModel,
+            cached: true,
+          });
+        }
+      }
+      console.log(`[revision] Shared Firestore cache MISS in ${Date.now() - cacheStart}ms (key=${cacheKey.slice(0, 12)})`);
+    } catch (cacheErr: any) {
+      console.warn(
+        `[revision] Shared Firestore cache lookup skipped (${Date.now() - cacheStart}ms):`,
+        cacheErr?.message || cacheErr
+      );
+    }
   }
 
   const geminiApiKey = process.env.GEMINI_API_KEY;
@@ -571,7 +738,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     `[revision] Drive/CDN fetch succeeded in ${fetchDurationMs}ms (kind=${noteContent.kind}, bytes=${noteContent.bytes}, subject="${cleanSubject}", unit="${cleanUnitTitle}")`
   );
 
-  // Step 4: Call Gemini (ThinkingLevel.LOW for fast structured JSON output)
+  // Step 4: Call Gemini with ordered automatic fallback chain on 503 / 429 spikes
   const ai = new GoogleGenAI({
     apiKey: geminiApiKey,
     httpOptions: {
@@ -612,99 +779,129 @@ Analyze the attached study notes and return valid JSON matching the schema.`;
           { text: `--- STUDY NOTES CONTENT ---\n${noteContent.text}\n--- END NOTES ---\n\n${contextPrompt}` },
         ];
 
-  const geminiStart = Date.now();
-  let textOutput: string | undefined;
-
-  try {
-    const response = await ai.models.generateContent({
-      model: "gemini-4-hydrogen",
-      contents: { parts: contentParts },
-      config: {
-        systemInstruction,
-        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-        responseMimeType: "application/json",
-        responseSchema: {
+  const responseSchema = {
+    type: Type.OBJECT,
+    properties: {
+      importantTopics: {
+        type: Type.ARRAY,
+        items: {
           type: Type.OBJECT,
           properties: {
-            importantTopics: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  topic: { type: Type.STRING },
-                  priority: { type: Type.STRING, enum: ["High", "Medium"] },
-                  whyImportant: { type: Type.STRING },
-                  noteRef: { type: Type.STRING },
-                },
-                required: ["topic", "priority", "whyImportant", "noteRef"],
-              },
-            },
-            importantQuestions: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  marks: { type: Type.INTEGER },
-                  question: { type: Type.STRING },
-                  keyPoints: {
-                    type: Type.ARRAY,
-                    items: { type: Type.STRING },
-                  },
-                  noteRef: { type: Type.STRING },
-                },
-                required: ["marks", "question", "keyPoints", "noteRef"],
-              },
-            },
-            quickChecklist: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  id: { type: Type.STRING },
-                  text: { type: Type.STRING },
-                },
-                required: ["id", "text"],
-              },
-            },
-            mcqs: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  id: { type: Type.STRING },
-                  question: { type: Type.STRING },
-                  options: {
-                    type: Type.ARRAY,
-                    items: { type: Type.STRING },
-                  },
-                  correctIndex: { type: Type.INTEGER },
-                  explanation: { type: Type.STRING },
-                  noteRef: { type: Type.STRING },
-                },
-                required: ["id", "question", "options", "correctIndex", "explanation", "noteRef"],
-              },
-            },
+            topic: { type: Type.STRING },
+            priority: { type: Type.STRING, enum: ["High", "Medium"] },
+            whyImportant: { type: Type.STRING },
+            noteRef: { type: Type.STRING },
           },
-          required: ["importantTopics", "importantQuestions", "quickChecklist", "mcqs"],
+          required: ["topic", "priority", "whyImportant", "noteRef"],
         },
       },
-    });
+      importantQuestions: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            marks: { type: Type.INTEGER },
+            question: { type: Type.STRING },
+            keyPoints: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+            },
+            noteRef: { type: Type.STRING },
+          },
+          required: ["marks", "question", "keyPoints", "noteRef"],
+        },
+      },
+      quickChecklist: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            id: { type: Type.STRING },
+            text: { type: Type.STRING },
+          },
+          required: ["id", "text"],
+        },
+      },
+      mcqs: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            id: { type: Type.STRING },
+            question: { type: Type.STRING },
+            options: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+            },
+            correctIndex: { type: Type.INTEGER },
+            explanation: { type: Type.STRING },
+            noteRef: { type: Type.STRING },
+          },
+          required: ["id", "question", "options", "correctIndex", "explanation", "noteRef"],
+        },
+      },
+    },
+    required: ["importantTopics", "importantQuestions", "quickChecklist", "mcqs"],
+  };
 
-    textOutput = response.text;
-    const geminiDurationMs = Date.now() - geminiStart;
-    console.log(
-      `[revision] Gemini call completed in ${geminiDurationMs}ms (outputChars=${textOutput?.length || 0})`
-    );
-  } catch (geminiErr: any) {
-    const geminiDurationMs = Date.now() - geminiStart;
-    const rawMsg = String(geminiErr?.message || "Gemini API request failed.");
-    console.error(`[revision] Gemini API error after ${geminiDurationMs}ms:`, rawMsg);
-    const isQuota = rawMsg.includes("429") || rawMsg.includes("RESOURCE_EXHAUSTED");
+  const geminiStart = Date.now();
+  let textOutput: string | undefined;
+  let modelUsed = MODEL_FALLBACK_CHAIN[0].model;
+  let lastGeminiErr: any = null;
+
+  for (let i = 0; i < MODEL_FALLBACK_CHAIN.length; i++) {
+    const candidate = MODEL_FALLBACK_CHAIN[i];
+    const attemptStart = Date.now();
+
+    try {
+      const response = await ai.models.generateContent({
+        model: candidate.model,
+        contents: { parts: contentParts },
+        config: {
+          systemInstruction,
+          thinkingConfig: { thinkingLevel: candidate.thinkingLevel },
+          responseMimeType: "application/json",
+          responseSchema,
+        },
+      });
+
+      textOutput = response.text;
+      modelUsed = candidate.model;
+      console.log(
+        `[revision] Gemini call succeeded with model=${modelUsed} (thinking=${candidate.thinkingLevel}) in ${Date.now() - attemptStart}ms (outputChars=${textOutput?.length || 0})`
+      );
+      lastGeminiErr = null;
+      break;
+    } catch (geminiErr: any) {
+      lastGeminiErr = geminiErr;
+      const attemptMs = Date.now() - attemptStart;
+      const rawMsg = String(geminiErr?.message || "Gemini API request failed.");
+      const canFallback = i < MODEL_FALLBACK_CHAIN.length - 1 && isRetryableModelOverloadError(geminiErr);
+
+      if (canFallback) {
+        const nextModel = MODEL_FALLBACK_CHAIN[i + 1].model;
+        console.warn(
+          `[revision] Model ${candidate.model} overloaded/unavailable after ${attemptMs}ms (${rawMsg}). Retrying with fallback model ${nextModel}...`
+        );
+        continue;
+      }
+
+      console.error(
+        `[revision] Gemini API error on model=${candidate.model} after ${attemptMs}ms (totalGeminiMs=${Date.now() - geminiStart}):`,
+        rawMsg
+      );
+      break;
+    }
+  }
+
+  if (lastGeminiErr) {
+    const rawMsg = String(lastGeminiErr?.message || "Gemini API request failed.");
+    const isQuotaOrDemand = isRetryableModelOverloadError(lastGeminiErr);
     return res.status(500).json({
-      error: isQuota
-        ? "Revision Mode AI service is temporarily rate-limited. Please wait a moment and retry."
+      error: isQuotaOrDemand
+        ? "All AI revision models are currently experiencing high demand. Please retry in a few seconds."
         : `Gemini AI error while reading notes: ${rawMsg}`,
-      code: isQuota ? "GEMINI_RATE_LIMITED" : "GEMINI_API_ERROR",
+      code: isQuotaOrDemand ? "GEMINI_HIGH_DEMAND" : "GEMINI_API_ERROR",
       step: "gemini",
     });
   }
@@ -756,6 +953,34 @@ Analyze the attached study notes and return valid JSON matching the schema.`;
     });
   }
 
-  console.log(`[revision] Total request completed in ${Date.now() - reqStart}ms`);
-  return res.status(200).json({ revisionPack });
+  // Step 6: Save to shared Firestore cache (best-effort, non-blocking failure)
+  if (firestoreDb) {
+    try {
+      await withTimeout(
+        firestoreDb
+          .collection(REVISION_CACHE_COLLECTION)
+          .doc(cacheKey)
+          .set({
+            cacheKey,
+            subject: cleanSubject,
+            unitTitle: cleanUnitTitle,
+            normalizedFileUrl,
+            year: cleanYear,
+            dept: cleanDept,
+            sem: cleanSem,
+            modelUsed,
+            revisionPack,
+            updatedAt: Date.now(),
+          }),
+        FIRESTORE_CACHE_TIMEOUT_MS,
+        "Firestore cache write"
+      );
+      console.log(`[revision] Saved pack to Firestore cache (key=${cacheKey.slice(0, 12)}, modelUsed=${modelUsed})`);
+    } catch (saveErr: any) {
+      console.warn("[revision] Shared Firestore cache write skipped:", saveErr?.message || saveErr);
+    }
+  }
+
+  console.log(`[revision] Total request completed in ${Date.now() - reqStart}ms (modelUsed=${modelUsed})`);
+  return res.status(200).json({ revisionPack, modelUsed, cached: false });
 }

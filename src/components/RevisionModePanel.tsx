@@ -173,6 +173,7 @@ export const RevisionModePanel: React.FC<RevisionModePanelProps> = ({
           subject,
           unitTitle,
           fileUrl: noteUrl,
+          forceRegenerate: bypassCache,
         }),
       });
 
