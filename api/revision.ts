@@ -10,17 +10,18 @@ import { GoogleGenAI, ThinkingLevel, Type } from "@google/genai";
 const MAX_FILE_BYTES = 25 * 1024 * 1024; // 25 MB limit for AI document analysis
 const MAX_REDIRECTS = 6;
 const FETCH_TIMEOUT_MS = 12000;
-const PER_MODEL_TIMEOUT_MS = 8000;
+const OVERALL_GEMINI_TIMEOUT_MS = 45000;
 const FIRESTORE_CACHE_TIMEOUT_MS = 2500;
 const REVISION_CACHE_COLLECTION = "revision_packs";
 
 const MODEL_FALLBACK_CHAIN: ReadonlyArray<{
   model: string;
   thinkingLevel: ThinkingLevel;
+  timeoutMs: number;
 }> = [
-  { model: "gemini-3.8-flash", thinkingLevel: ThinkingLevel.LOW },
-  { model: "gemini-3.5-flash-lite", thinkingLevel: ThinkingLevel.MINIMAL },
-  { model: "gemini-4-hydrogen", thinkingLevel: ThinkingLevel.LOW },
+  { model: "gemini-3.8-flash", thinkingLevel: ThinkingLevel.LOW, timeoutMs: 15000 },
+  { model: "gemini-3.5-flash-lite", thinkingLevel: ThinkingLevel.MINIMAL, timeoutMs: 12000 },
+  { model: "gemini-4-hydrogen", thinkingLevel: ThinkingLevel.LOW, timeoutMs: 12000 },
 ];
 
 interface RevisionTopic {
@@ -608,7 +609,7 @@ function normalizeRevisionPack(raw: any): RevisionPack {
 
 function isRetryableModelOverloadError(err: any): boolean {
   const status = Number(err?.status ?? err?.code ?? 0);
-  if (status === 503 || status === 429) return true;
+  if (status === 503 || status === 429 || status === 504) return true;
   const name = String(err?.name || "").toUpperCase();
   const msg = String(err?.message || "").toUpperCase();
   return (
@@ -616,8 +617,10 @@ function isRetryableModelOverloadError(err: any): boolean {
     name === "ABORTERROR" ||
     msg.includes("503") ||
     msg.includes("429") ||
+    msg.includes("504") ||
     msg.includes("UNAVAILABLE") ||
     msg.includes("RESOURCE_EXHAUSTED") ||
+    msg.includes("DEADLINE_EXCEEDED") ||
     msg.includes("HIGH DEMAND") ||
     msg.includes("OVERLOADED") ||
     msg.includes("TIMEOUT") ||
@@ -750,11 +753,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     `[revision] Drive/CDN fetch succeeded in ${fetchDurationMs}ms (kind=${noteContent.kind}, bytes=${noteContent.bytes}, subject="${cleanSubject}", unit="${cleanUnitTitle}")`
   );
 
-  // Step 4: Call Gemini with fast failover (8s per model, no SDK retry backoff)
+  // Step 4: Call Gemini with clean >=12s-15s per-model deadlines (Gemini minimum is 10s),
+  // no slow multi-retry backoff, and a 45s overall request guard.
   const ai = new GoogleGenAI({
     apiKey: geminiApiKey,
     httpOptions: {
-      timeout: PER_MODEL_TIMEOUT_MS,
       retryOptions: { attempts: 1 },
       headers: {
         "User-Agent": "aistudio-build",
@@ -865,7 +868,17 @@ Analyze the attached study notes and return valid JSON matching the schema.`;
 
   for (let i = 0; i < MODEL_FALLBACK_CHAIN.length; i++) {
     const candidate = MODEL_FALLBACK_CHAIN[i];
+    const elapsedGeminiMs = Date.now() - geminiStart;
+    const remainingBudgetMs = OVERALL_GEMINI_TIMEOUT_MS - elapsedGeminiMs;
+    if (i > 0 && remainingBudgetMs < candidate.timeoutMs) {
+      console.warn(
+        `[revision] Skipping fallback ${candidate.model}: remaining 45s budget (${remainingBudgetMs}ms) is below safe ${candidate.timeoutMs}ms deadline.`
+      );
+      break;
+    }
+
     const attemptStart = Date.now();
+    const attemptTimeoutMs = candidate.timeoutMs;
 
     try {
       const response = await ai.models.generateContent({
@@ -876,14 +889,15 @@ Analyze the attached study notes and return valid JSON matching the schema.`;
           thinkingConfig: { thinkingLevel: candidate.thinkingLevel },
           responseMimeType: "application/json",
           responseSchema,
-          abortSignal: AbortSignal.timeout(PER_MODEL_TIMEOUT_MS),
+          httpOptions: { timeout: attemptTimeoutMs },
+          abortSignal: AbortSignal.timeout(attemptTimeoutMs),
         },
       });
 
       textOutput = response.text;
       modelUsed = candidate.model;
       console.log(
-        `[revision] Gemini call succeeded with model=${modelUsed} (thinking=${candidate.thinkingLevel}) in ${Date.now() - attemptStart}ms (outputChars=${textOutput?.length || 0})`
+        `[revision] Gemini call succeeded with model=${modelUsed} (thinking=${candidate.thinkingLevel}, timeout=${attemptTimeoutMs}ms) in ${Date.now() - attemptStart}ms (outputChars=${textOutput?.length || 0})`
       );
       lastGeminiErr = null;
       break;
@@ -896,7 +910,7 @@ Analyze the attached study notes and return valid JSON matching the schema.`;
       if (canFallback) {
         const nextModel = MODEL_FALLBACK_CHAIN[i + 1].model;
         console.warn(
-          `[revision] Model ${candidate.model} failed/timed out after ${attemptMs}ms (${rawMsg}). Failing over immediately to ${nextModel}...`
+          `[revision] Model ${candidate.model} failed/timed out after ${attemptMs}ms (${rawMsg}). Failing over to ${nextModel}...`
         );
         continue;
       }
