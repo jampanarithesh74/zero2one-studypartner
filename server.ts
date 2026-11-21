@@ -15,6 +15,7 @@ import linkedinJoinHandler from "./api/auth/linkedin/join";
 import uploadHandler from "./api/upload";
 import downloadHandler from "./api/download";
 import parseSyllabusPdfHandler from "./api/parse-syllabus-pdf";
+import revisionHandler from "./api/revision";
 
 const app = express();
 const PORT = 3000;
@@ -97,6 +98,9 @@ app.get("/api/download", wrapVercelHandler(downloadHandler));
 
 // Gemini AI Syllabus Extractor
 app.post("/api/parse-syllabus-pdf", wrapVercelHandler(parseSyllabusPdfHandler));
+
+// Gemini AI Note Revision Mode Generator
+app.post("/api/revision", wrapVercelHandler(revisionHandler));
 
 // Global error handler
 app.use((err: any, req: any, res: any, next: any) => {

@@ -13,6 +13,7 @@ import { onAuthStateChanged, signInWithPopup, signOut, User } from "firebase/aut
 import { doc, getDoc, setDoc, collection, addDoc, query, where, onSnapshot, serverTimestamp, deleteDoc, updateDoc, getDocs, writeBatch, Timestamp } from "firebase/firestore";
 import { ref as storageRef, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { PDFViewer } from "./components/PDFViewer";
+import { RevisionModePanel } from "./components/RevisionModePanel";
 import { downloadNoteToDevice } from "./lib/downloadNotes";
 import { ToolsModule } from "./components/ToolsModule";
 import { EventsModule } from "./components/EventsModule";
@@ -833,6 +834,7 @@ export default function App() {
   };
 
   const [downloadingResourceId, setDownloadingResourceId] = useState<string | null>(null);
+  const [isRevisionMode, setIsRevisionMode] = useState<boolean>(false);
 
   const handleDownloadResource = async (resource: any, fallbackTitle?: string) => {
     if (!resource) return;
@@ -941,12 +943,19 @@ export default function App() {
 
   useEffect(() => {
     setPreviewRotation(0);
+    setIsRevisionMode(false);
     if (activeUnitNoteUrl) {
       setIframeLoading(true);
     } else {
       setIframeLoading(false);
     }
   }, [activeUnitNoteUrl, activeSubject, expandedUnit]);
+
+  useEffect(() => {
+    if (!user) {
+      setIsRevisionMode(false);
+    }
+  }, [user]);
 
   useEffect(() => {
     setFullscreenRotation(0);
@@ -4113,11 +4122,27 @@ export default function App() {
                               if (activeNote) {
                                 const noteKey = activeNote.id || `${activeNote.subjectCode || "note"}-${activeNote.unit || "doc"}`;
                                 const isDownloadingThis = downloadingResourceId === noteKey;
+                                const hasNoteSource = Boolean(activeNote.fileUrl || activeNote.driveLink);
                                 if (activeNote.driveLink) {
                                   // Under Temporary Exam-Season Fallback Mode: prioritize direct external actions
                                   return (
                                     <>
-                                      {(activeNote.fileUrl || activeNote.driveLink) && (
+                                      {user && hasNoteSource && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setIsRevisionMode(prev => !prev)}
+                                          aria-pressed={isRevisionMode}
+                                          className={`flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border cursor-pointer shadow-sm active:scale-[0.98] ${
+                                            isRevisionMode
+                                              ? "bg-[#0a0a0a] text-orange-400 border-orange-500/50"
+                                              : "bg-neutral-900 hover:bg-black text-white border-neutral-800"
+                                          }`}
+                                        >
+                                          <Sparkles size={12} className="text-orange-400" />
+                                          {isRevisionMode ? "Revision Mode: ON" : "Revision Mode"}
+                                        </button>
+                                      )}
+                                      {hasNoteSource && (
                                         <button
                                           type="button"
                                           disabled={isDownloadingThis}
@@ -4172,6 +4197,21 @@ export default function App() {
                                         >
                                           <Maximize2 size={12} /> Full Screen
                                         </button>
+                                        {user && (
+                                          <button
+                                            type="button"
+                                            onClick={() => setIsRevisionMode(prev => !prev)}
+                                            aria-pressed={isRevisionMode}
+                                            className={`flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border cursor-pointer shadow-sm active:scale-[0.98] ${
+                                              isRevisionMode
+                                                ? "bg-[#0a0a0a] text-orange-400 border-orange-500/50"
+                                                : "bg-neutral-900 hover:bg-black text-white border-neutral-800"
+                                            }`}
+                                          >
+                                            <Sparkles size={12} className="text-orange-400" />
+                                            {isRevisionMode ? "Revision Mode: ON" : "Revision Mode"}
+                                          </button>
+                                        )}
                                         <button
                                           type="button"
                                           disabled={isDownloadingThis}
@@ -4254,60 +4294,86 @@ export default function App() {
                                     )}
                                   </div>
                                   
-                                  {/* Beautiful, High-Performance Google Drive / direct link Resource Card in ZERO2ONE style */}
-                                  <div className="w-full h-auto flex flex-col items-center justify-center p-6 md:p-8 text-center bg-white border border-orange-100 rounded-2xl shadow-sm hover:shadow-orange-400/5 transition-all duration-300 animate-fadeIn">
-                                    {/* Google Drive icon representation */}
-                                    <div className="w-16 h-16 rounded-2xl bg-orange-50 border border-orange-100 flex items-center justify-center text-orange-500 mb-5 relative shrink-0">
-                                      <Layers size={30} />
-                                      <div className="absolute -bottom-1 -right-1 bg-white border border-neutral-100 text-neutral-800 rounded-full p-1 shadow-sm">
-                                        <ExternalLink size={10} />
+                                  {/* Revision Mode (Logged-in users only) OR Direct Access Card */}
+                                  {user && isRevisionMode && (activeNote.fileUrl || activeNote.driveLink) ? (
+                                    <RevisionModePanel
+                                      noteUrl={activeNote.fileUrl || activeNote.driveLink}
+                                      fallbackOpenUrl={activeNote.driveLink || activeNote.fileUrl}
+                                      year={selectedYear || userProfile?.effectiveAcademicYear || Math.ceil((selectedSem || 1) / 2)}
+                                      dept={selectedDept || userProfile?.departmentName || "B.Tech"}
+                                      sem={selectedSem || 1}
+                                      subject={activeSubjectData?.title ? `${activeSubject} - ${activeSubjectData.title}` : (activeSubject || "")}
+                                      unitTitle={activeSubjectData.units[expandedUnit]?.title || activeNote.title || `Unit ${expandedUnit + 1}`}
+                                      getAuthToken={async () => (user ? user.getIdToken() : null)}
+                                      onClose={() => setIsRevisionMode(false)}
+                                    />
+                                  ) : (
+                                    <div className="w-full h-auto flex flex-col items-center justify-center p-6 md:p-8 text-center bg-white border border-orange-100 rounded-2xl shadow-sm hover:shadow-orange-400/5 transition-all duration-300 animate-fadeIn">
+                                      {/* Google Drive icon representation */}
+                                      <div className="w-16 h-16 rounded-2xl bg-orange-50 border border-orange-100 flex items-center justify-center text-orange-500 mb-5 relative shrink-0">
+                                        <Layers size={30} />
+                                        <div className="absolute -bottom-1 -right-1 bg-white border border-neutral-100 text-neutral-800 rounded-full p-1 shadow-sm">
+                                          <ExternalLink size={10} />
+                                        </div>
                                       </div>
-                                    </div>
-                                    
-                                    <div className="space-y-2 max-w-md mb-6 shrink-0 select-none">
-                                      <h4 className="font-extrabold text-neutral-900 text-base md:text-lg leading-tight tracking-tight">
-                                        {activeNote.title || `Unit ${expandedUnit + 1} Study Notes`}
-                                      </h4>
-                                      <p className="text-xs text-neutral-500 font-medium leading-relaxed">
-                                        Active Direct Access Mode is enabled. View the study material instantly without preview errors, delays, or blank pages.
-                                      </p>
-                                      <div className="pt-1.5">
-                                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black bg-orange-100 text-orange-950 uppercase tracking-widest border border-orange-200">
-                                          {activeNote.driveLink ? "Open in Google Drive" : "Document Active"}
-                                        </span>
+                                      
+                                      <div className="space-y-2 max-w-md mb-6 shrink-0 select-none">
+                                        <h4 className="font-extrabold text-neutral-900 text-base md:text-lg leading-tight tracking-tight">
+                                          {activeNote.title || `Unit ${expandedUnit + 1} Study Notes`}
+                                        </h4>
+                                        <p className="text-xs text-neutral-500 font-medium leading-relaxed">
+                                          Active Direct Access Mode is enabled. View the study material instantly without preview errors, delays, or blank pages.
+                                        </p>
+                                        <div className="pt-1.5">
+                                          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black bg-orange-100 text-orange-950 uppercase tracking-widest border border-orange-200">
+                                            {activeNote.driveLink ? "Open in Google Drive" : "Document Active"}
+                                          </span>
+                                        </div>
                                       </div>
-                                    </div>
 
-                                    {/* Actions: Stacks vertically as nice big targets on mobile, maps inline on desktop */}
-                                    <div className="flex flex-col sm:flex-row gap-3 w-full max-w-md justify-center shrink-0">
-                                      {/* primary large orange action driver */}
-                                      <a 
-                                        href={activeNote.driveLink || activeNote.fileUrl}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="flex items-center justify-center gap-2 px-6 py-3.5 bg-orange-500 hover:bg-orange-600 text-white font-black rounded-xl text-xs sm:text-sm shadow-md hover:shadow-lg transition-all active:scale-[0.98] cursor-pointer w-full whitespace-nowrap"
-                                      >
-                                        Open Notes <ArrowUpRight size={14} />
-                                      </a>
+                                      {/* Actions: Stacks vertically as nice big targets on mobile, maps inline on desktop */}
+                                      <div className="flex flex-col sm:flex-row flex-wrap gap-3 w-full max-w-lg justify-center shrink-0">
+                                        {/* primary large orange action driver */}
+                                        <a 
+                                          href={activeNote.driveLink || activeNote.fileUrl}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="flex items-center justify-center gap-2 px-5 py-3.5 bg-orange-500 hover:bg-orange-600 text-white font-black rounded-xl text-xs sm:text-sm shadow-md hover:shadow-lg transition-all active:scale-[0.98] cursor-pointer flex-1 min-w-[140px] whitespace-nowrap"
+                                        >
+                                          Open Notes <ArrowUpRight size={14} />
+                                        </a>
 
-                                      {/* device download action button */}
-                                      {(activeNote.fileUrl || activeNote.driveLink) && (() => {
-                                        const noteKey = activeNote.id || `${activeNote.subjectCode || "note"}-${activeNote.unit || "doc"}`;
-                                        const isDownloadingThis = downloadingResourceId === noteKey;
-                                        return (
+                                        {/* device download action button */}
+                                        {(activeNote.fileUrl || activeNote.driveLink) && (() => {
+                                          const noteKey = activeNote.id || `${activeNote.subjectCode || "note"}-${activeNote.unit || "doc"}`;
+                                          const isDownloadingThis = downloadingResourceId === noteKey;
+                                          return (
+                                            <button
+                                              type="button"
+                                              disabled={isDownloadingThis}
+                                              onClick={() => handleDownloadResource(activeNote, `Unit ${expandedUnit + 1} Notes - ${activeSubject}`)}
+                                              className="flex items-center justify-center gap-2 px-5 py-3.5 bg-neutral-900 hover:bg-black text-white font-bold rounded-xl text-xs sm:text-sm shadow-md transition-all active:scale-[0.98] cursor-pointer flex-1 min-w-[155px] whitespace-nowrap disabled:opacity-60"
+                                            >
+                                              <Download size={14} className={isDownloadingThis ? "animate-bounce" : ""} />
+                                              {isDownloadingThis ? "Downloading..." : "Download Notes"}
+                                            </button>
+                                          );
+                                        })()}
+
+                                        {/* Logged-in only Revision Mode toggle button alongside Download Notes */}
+                                        {user && (activeNote.fileUrl || activeNote.driveLink) && (
                                           <button
                                             type="button"
-                                            disabled={isDownloadingThis}
-                                            onClick={() => handleDownloadResource(activeNote, `Unit ${expandedUnit + 1} Notes - ${activeSubject}`)}
-                                            className="flex items-center justify-center gap-2 px-5 py-3.5 bg-neutral-900 hover:bg-black text-white font-bold rounded-xl text-xs sm:text-sm shadow-md transition-all active:scale-[0.98] cursor-pointer w-full whitespace-nowrap disabled:opacity-60"
+                                            onClick={() => setIsRevisionMode(true)}
+                                            className="flex items-center justify-center gap-2 px-5 py-3.5 bg-[#0a0a0a] hover:bg-neutral-900 text-orange-400 border border-orange-500/35 font-black rounded-xl text-xs sm:text-sm shadow-md transition-all active:scale-[0.98] cursor-pointer flex-1 min-w-[155px] whitespace-nowrap"
                                           >
-                                            <Download size={14} className={isDownloadingThis ? "animate-bounce" : ""} />
-                                            {isDownloadingThis ? "Downloading..." : "Download Notes"}
+                                            <Sparkles size={14} />
+                                            Revision Mode
                                           </button>
-                                        );
-                                      })()}
+                                        )}
+                                      </div>
                                     </div>
-                                  </div>
+                                  )}
                                 </div>
                               );
                             } else if (isAdmin) {
