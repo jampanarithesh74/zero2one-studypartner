@@ -13,6 +13,7 @@ import linkedinStartHandler from "./api/auth/linkedin/start";
 import linkedinCallbackHandler from "./api/auth/linkedin/callback";
 import linkedinJoinHandler from "./api/auth/linkedin/join";
 import uploadHandler from "./api/upload";
+import downloadHandler from "./api/download";
 import parseSyllabusPdfHandler from "./api/parse-syllabus-pdf";
 
 const app = express();
@@ -90,6 +91,9 @@ app.post("/api/upload", upload.single("file"), async (req, res, next) => {
   }
   return wrapVercelHandler(uploadHandler)(req, res, next);
 });
+
+// Supabase / Drive File Download Proxy Route
+app.get("/api/download", wrapVercelHandler(downloadHandler));
 
 // Gemini AI Syllabus Extractor
 app.post("/api/parse-syllabus-pdf", wrapVercelHandler(parseSyllabusPdfHandler));

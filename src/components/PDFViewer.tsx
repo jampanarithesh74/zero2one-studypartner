@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { AlertCircle, RefreshCw, Layers, ArrowUpRight, Download, ExternalLink } from "lucide-react";
+import { downloadNoteToDevice } from "../lib/downloadNotes";
 
 interface PDFViewerProps {
   fileUrl: string;
@@ -20,6 +21,7 @@ export function PDFViewer({ fileUrl, rotation, isFullscreen = false, title, driv
   const [pdfDoc, setPdfDoc] = useState<any>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [fallbackMode, setFallbackMode] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -139,13 +141,13 @@ export function PDFViewer({ fileUrl, rotation, isFullscreen = false, title, driv
           </div>
         </div>
 
-        <div className="flex flex-col sm:flex-row gap-3 w-full max-w-xs justify-center shrink-0">
+        <div className="flex flex-col sm:flex-row gap-3 w-full max-w-md justify-center shrink-0">
           {driveLink ? (
             <a 
               href={driveLink}
               target="_blank"
               rel="noreferrer"
-              className="flex items-center justify-center gap-1.5 px-6 py-3 bg-orange-500 hover:bg-orange-600 text-white font-black rounded-xl text-xs md:text-sm shadow-md transition-all active:scale-[0.98] cursor-pointer"
+              className="flex items-center justify-center gap-1.5 px-6 py-3 bg-orange-500 hover:bg-orange-600 text-white font-black rounded-xl text-xs md:text-sm shadow-md transition-all active:scale-[0.98] cursor-pointer w-full"
             >
               Open Notes <ArrowUpRight size={14} />
             </a>
@@ -154,21 +156,29 @@ export function PDFViewer({ fileUrl, rotation, isFullscreen = false, title, driv
               href={fileUrl}
               target="_blank"
               rel="noreferrer"
-              className="flex items-center justify-center gap-1.5 px-6 py-3 bg-orange-500 hover:bg-orange-600 text-white font-black rounded-xl text-xs md:text-sm shadow-md transition-all active:scale-[0.98] cursor-pointer"
+              className="flex items-center justify-center gap-1.5 px-6 py-3 bg-orange-500 hover:bg-orange-600 text-white font-black rounded-xl text-xs md:text-sm shadow-md transition-all active:scale-[0.98] cursor-pointer w-full"
             >
               Open Notes <ArrowUpRight size={14} />
             </a>
           )}
 
-          {fileUrl && (
-            <a 
-              href={fileUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center justify-center gap-1.5 px-4 py-3 bg-neutral-50 hover:bg-neutral-100 border border-neutral-200 text-neutral-750 font-bold rounded-xl text-xs sm:text-sm transition-all active:scale-[0.98] cursor-pointer"
+          {(fileUrl || driveLink) && (
+            <button
+              type="button"
+              disabled={downloading}
+              onClick={async () => {
+                setDownloading(true);
+                try {
+                  await downloadNoteToDevice({ fileUrl, driveLink, title });
+                } finally {
+                  setDownloading(false);
+                }
+              }}
+              className="flex items-center justify-center gap-1.5 px-4 py-3 bg-neutral-50 hover:bg-neutral-100 border border-neutral-200 text-neutral-800 font-bold rounded-xl text-xs sm:text-sm transition-all active:scale-[0.98] cursor-pointer w-full disabled:opacity-60"
             >
-              <Download size={13} /> Download PDF
-            </a>
+              <Download size={13} className={downloading ? "animate-bounce" : ""} />
+              {downloading ? "Downloading..." : "Download Notes"}
+            </button>
           )}
         </div>
       </div>

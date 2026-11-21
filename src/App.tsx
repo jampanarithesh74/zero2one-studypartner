@@ -13,6 +13,7 @@ import { onAuthStateChanged, signInWithPopup, signOut, User } from "firebase/aut
 import { doc, getDoc, setDoc, collection, addDoc, query, where, onSnapshot, serverTimestamp, deleteDoc, updateDoc, getDocs, writeBatch, Timestamp } from "firebase/firestore";
 import { ref as storageRef, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { PDFViewer } from "./components/PDFViewer";
+import { downloadNoteToDevice } from "./lib/downloadNotes";
 import { ToolsModule } from "./components/ToolsModule";
 import { EventsModule } from "./components/EventsModule";
 import { PublicEventPage } from "./components/PublicEventPage";
@@ -829,6 +830,28 @@ export default function App() {
     setTimeout(() => {
       setToast(null);
     }, 3000);
+  };
+
+  const [downloadingResourceId, setDownloadingResourceId] = useState<string | null>(null);
+
+  const handleDownloadResource = async (resource: any, fallbackTitle?: string) => {
+    if (!resource) return;
+    const targetId = resource.id || `${resource.subjectCode || "note"}-${resource.unit || "doc"}`;
+    setDownloadingResourceId(targetId);
+    try {
+      const result = await downloadNoteToDevice({
+        fileUrl: resource.fileUrl,
+        driveLink: resource.driveLink,
+        title: resource.title || fallbackTitle || `${activeSubject || "Study"}-Notes`,
+      });
+      if (result.message) {
+        showToast(result.message, result.ok ? "success" : "info");
+      }
+    } catch (err: any) {
+      showToast(err?.message || "Failed to download notes to device.", "info");
+    } finally {
+      setDownloadingResourceId(null);
+    }
   };
 
   // Admin Announcement Form State
@@ -4088,19 +4111,22 @@ export default function App() {
                             {(() => {
                               const activeNote = uploadedResources.find(r => r.subjectCode === activeSubject && r.type === "notes" && r.unit === expandedUnit + 1);
                               if (activeNote) {
+                                const noteKey = activeNote.id || `${activeNote.subjectCode || "note"}-${activeNote.unit || "doc"}`;
+                                const isDownloadingThis = downloadingResourceId === noteKey;
                                 if (activeNote.driveLink) {
                                   // Under Temporary Exam-Season Fallback Mode: prioritize direct external actions
                                   return (
                                     <>
-                                      {activeNote.fileUrl && (
-                                        <a 
-                                          href={activeNote.fileUrl}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-neutral-100 hover:bg-neutral-200 text-neutral-750 text-xs font-bold transition-all border border-neutral-250 cursor-pointer shadow-sm active:scale-[0.98]"
+                                      {(activeNote.fileUrl || activeNote.driveLink) && (
+                                        <button
+                                          type="button"
+                                          disabled={isDownloadingThis}
+                                          onClick={() => handleDownloadResource(activeNote, `Unit ${expandedUnit + 1} Notes - ${activeSubject}`)}
+                                          className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-xs font-bold transition-all border border-neutral-200 cursor-pointer shadow-sm active:scale-[0.98] disabled:opacity-60"
                                         >
-                                          <Download size={12} /> Download PDF
-                                        </a>
+                                          <Download size={12} className={isDownloadingThis ? "animate-bounce" : ""} />
+                                          {isDownloadingThis ? "Downloading..." : "Download Notes"}
+                                        </button>
                                       )}
                                       <a 
                                         href={activeNote.driveLink}
@@ -4146,14 +4172,15 @@ export default function App() {
                                         >
                                           <Maximize2 size={12} /> Full Screen
                                         </button>
-                                        <a 
-                                          href={activeNote.fileUrl}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-orange-500 text-white text-xs font-bold hover:bg-orange-600 transition-all shadow-sm w-full sm:w-auto active:scale-[0.98]"
+                                        <button
+                                          type="button"
+                                          disabled={isDownloadingThis}
+                                          onClick={() => handleDownloadResource(activeNote, `Unit ${expandedUnit + 1} Notes - ${activeSubject}`)}
+                                          className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-orange-500 text-white text-xs font-bold hover:bg-orange-600 transition-all shadow-sm w-full sm:w-auto active:scale-[0.98] cursor-pointer disabled:opacity-60"
                                         >
-                                          <Download size={12} /> Download PDF
-                                        </a>
+                                          <Download size={12} className={isDownloadingThis ? "animate-bounce" : ""} />
+                                          {isDownloadingThis ? "Downloading..." : "Download Notes"}
+                                        </button>
                                       </>
                                     )}
                                   </>
@@ -4252,28 +4279,33 @@ export default function App() {
                                     </div>
 
                                     {/* Actions: Stacks vertically as nice big targets on mobile, maps inline on desktop */}
-                                    <div className="flex flex-col sm:flex-row gap-3 w-full max-w-xs justify-center shrink-0">
+                                    <div className="flex flex-col sm:flex-row gap-3 w-full max-w-md justify-center shrink-0">
                                       {/* primary large orange action driver */}
                                       <a 
                                         href={activeNote.driveLink || activeNote.fileUrl}
                                         target="_blank"
                                         rel="noreferrer"
-                                        className="flex items-center justify-center gap-2 px-6 py-3.5 bg-orange-500 hover:bg-orange-600 text-white font-black rounded-xl text-xs sm:text-sm shadow-md hover:shadow-lg transition-all active:scale-[0.98] cursor-pointer w-full"
+                                        className="flex items-center justify-center gap-2 px-6 py-3.5 bg-orange-500 hover:bg-orange-600 text-white font-black rounded-xl text-xs sm:text-sm shadow-md hover:shadow-lg transition-all active:scale-[0.98] cursor-pointer w-full whitespace-nowrap"
                                       >
                                         Open Notes <ArrowUpRight size={14} />
                                       </a>
 
-                                      {/* secondary download action trigger if uploaded */}
-                                      {activeNote.fileUrl && (
-                                        <a 
-                                          href={activeNote.fileUrl}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          className="flex items-center justify-center gap-2 px-5 py-3.5 bg-neutral-50 border border-neutral-250 hover:bg-neutral-100 text-neutral-750 font-bold rounded-xl text-xs sm:text-sm shadow-sm transition-all active:scale-[0.98] cursor-pointer w-full"
-                                        >
-                                          <Download size={13} /> Download PDF
-                                        </a>
-                                      )}
+                                      {/* device download action button */}
+                                      {(activeNote.fileUrl || activeNote.driveLink) && (() => {
+                                        const noteKey = activeNote.id || `${activeNote.subjectCode || "note"}-${activeNote.unit || "doc"}`;
+                                        const isDownloadingThis = downloadingResourceId === noteKey;
+                                        return (
+                                          <button
+                                            type="button"
+                                            disabled={isDownloadingThis}
+                                            onClick={() => handleDownloadResource(activeNote, `Unit ${expandedUnit + 1} Notes - ${activeSubject}`)}
+                                            className="flex items-center justify-center gap-2 px-5 py-3.5 bg-neutral-900 hover:bg-black text-white font-bold rounded-xl text-xs sm:text-sm shadow-md transition-all active:scale-[0.98] cursor-pointer w-full whitespace-nowrap disabled:opacity-60"
+                                          >
+                                            <Download size={14} className={isDownloadingThis ? "animate-bounce" : ""} />
+                                            {isDownloadingThis ? "Downloading..." : "Download Notes"}
+                                          </button>
+                                        );
+                                      })()}
                                     </div>
                                   </div>
                                 </div>
@@ -4436,16 +4468,16 @@ export default function App() {
                             </div>
                             
                             <div className="flex items-center gap-1.5">
-                              {res.fileUrl && (
-                                <a 
-                                  href={res.fileUrl}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="w-8 h-8 rounded-full bg-neutral-50 hover:bg-orange-500 hover:text-white hover:border-orange-400 border border-neutral-100 text-neutral-400 flex items-center justify-center shadow-sm transition-all"
-                                  title="Download past paper"
+                              {(res.fileUrl || res.driveLink) && (
+                                <button
+                                  type="button"
+                                  disabled={downloadingResourceId === (res.id || `${res.subjectCode || "note"}-${res.unit || "doc"}`)}
+                                  onClick={() => handleDownloadResource(res, `${activeSubject} - ${res.year || "Past"} Paper`)}
+                                  className="w-8 h-8 rounded-full bg-neutral-50 hover:bg-orange-500 hover:text-white hover:border-orange-400 border border-neutral-100 text-neutral-500 flex items-center justify-center shadow-sm transition-all cursor-pointer disabled:opacity-60"
+                                  title="Download past paper to device"
                                 >
-                                  <Download size={13} />
-                                </a>
+                                  <Download size={13} className={downloadingResourceId === (res.id || `${res.subjectCode || "note"}-${res.unit || "doc"}`) ? "animate-bounce" : ""} />
+                                </button>
                               )}
                               {res.driveLink && (
                                 <a 
@@ -5725,14 +5757,15 @@ export default function App() {
                         <ExternalLink size={14} /> Open Drive
                       </a>
                     )}
-                    <a 
-                      href={activeNote.fileUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="flex items-center gap-1.5 px-3 py-1.5 md:px-4 md:py-2 rounded-lg bg-orange-500 text-white text-xs font-bold hover:bg-orange-600 transition-all shadow-md"
+                    <button
+                      type="button"
+                      disabled={downloadingResourceId === (activeNote.id || `${activeNote.subjectCode || "note"}-${activeNote.unit || "doc"}`)}
+                      onClick={() => handleDownloadResource(activeNote)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 md:px-4 md:py-2 rounded-lg bg-orange-500 text-white text-xs font-bold hover:bg-orange-600 transition-all shadow-md cursor-pointer disabled:opacity-60"
                     >
-                      <Download size={14} /> Download
-                    </a>
+                      <Download size={14} className={downloadingResourceId === (activeNote.id || `${activeNote.subjectCode || "note"}-${activeNote.unit || "doc"}`) ? "animate-bounce" : ""} />
+                      {downloadingResourceId === (activeNote.id || `${activeNote.subjectCode || "note"}-${activeNote.unit || "doc"}`) ? "Downloading..." : "Download"}
+                    </button>
                     <button 
                       onClick={() => setIsFullscreen(false)}
                       className="flex items-center gap-1.5 px-3 py-1.5 md:px-4 md:py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition-all cursor-pointer"
