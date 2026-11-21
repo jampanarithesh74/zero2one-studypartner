@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   BookMarked,
@@ -34,6 +34,7 @@ type MarkFilter = "all" | 2 | 5 | 10;
 
 const PACK_CACHE_PREFIX = "zero2one_revision_pack_v1:";
 const CHECKLIST_CACHE_PREFIX = "zero2one_revision_checklist_v1:";
+const REQUEST_TIMEOUT_MS = 30000;
 
 function isValidRevisionPack(data: any): data is RevisionPack {
   return (
@@ -62,9 +63,11 @@ export const RevisionModePanel: React.FC<RevisionModePanelProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<RevisionTab>("topics");
   const [pack, setPack] = useState<RevisionPack | null>(null);
-  const [loading, setLoading] = useState<boolean>(false);
+  const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [fromCache, setFromCache] = useState<boolean>(false);
+
+  const activeControllerRef = useRef<AbortController | null>(null);
 
   // Questions tab state
   const [markFilter, setMarkFilter] = useState<MarkFilter>("all");
@@ -101,9 +104,16 @@ export const RevisionModePanel: React.FC<RevisionModePanelProps> = ({
   }, [checklistCacheKey, noteUrl]);
 
   const fetchRevisionPack = async (bypassCache = false) => {
+    // Cancel any previous in-flight request cleanly
+    if (activeControllerRef.current) {
+      activeControllerRef.current.abort();
+      activeControllerRef.current = null;
+    }
+
     if (!noteUrl) {
       setError("No readable note file or link is attached to this unit.");
       setPack(null);
+      setIsGenerating(false);
       return;
     }
 
@@ -116,7 +126,7 @@ export const RevisionModePanel: React.FC<RevisionModePanelProps> = ({
             setPack(cached);
             setFromCache(true);
             setError(null);
-            setLoading(false);
+            setIsGenerating(false);
             return;
           }
         }
@@ -125,20 +135,33 @@ export const RevisionModePanel: React.FC<RevisionModePanelProps> = ({
       }
     }
 
-    setLoading(true);
+    const controller = new AbortController();
+    activeControllerRef.current = controller;
+    let didTimeout = false;
+    const timeoutId = window.setTimeout(() => {
+      didTimeout = true;
+      controller.abort();
+    }, REQUEST_TIMEOUT_MS);
+
+    setIsGenerating(true);
     setError(null);
     setFromCache(false);
 
     try {
       const token = await getAuthToken();
+      if (controller.signal.aborted) {
+        throw new DOMException("Aborted", "AbortError");
+      }
+
       if (!token) {
         setError("Your student sign-in session could not be verified. Please sign in again to use Revision Mode.");
-        setLoading(false);
+        setPack(null);
         return;
       }
 
       const response = await fetch("/api/revision", {
         method: "POST",
+        signal: controller.signal,
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
@@ -155,7 +178,7 @@ export const RevisionModePanel: React.FC<RevisionModePanelProps> = ({
 
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        setError(data?.error || `Could not build Revision Mode for these notes (status ${response.status}).`);
+        setError(data?.error || `Could not build Revision Mode for these notes (HTTP ${response.status}).`);
         setPack(null);
         return;
       }
@@ -175,10 +198,25 @@ export const RevisionModePanel: React.FC<RevisionModePanelProps> = ({
         // Ignore storage quota errors
       }
     } catch (err: any) {
+      if (err?.name === "AbortError") {
+        if (didTimeout) {
+          setError(
+            "Revision Mode timed out after 30 seconds while analyzing these notes. Please retry or open the notes directly."
+          );
+          setPack(null);
+        }
+        return;
+      }
       setError(err?.message || "Network error while generating Revision Mode. Please try again.");
       setPack(null);
     } finally {
-      setLoading(false);
+      window.clearTimeout(timeoutId);
+      if (activeControllerRef.current === controller) {
+        activeControllerRef.current = null;
+        setIsGenerating(false);
+      } else if (!activeControllerRef.current) {
+        setIsGenerating(false);
+      }
     }
   };
 
@@ -186,6 +224,13 @@ export const RevisionModePanel: React.FC<RevisionModePanelProps> = ({
     setSelectedAnswers({});
     setMarkFilter("all");
     fetchRevisionPack(false);
+
+    return () => {
+      if (activeControllerRef.current) {
+        activeControllerRef.current.abort();
+        activeControllerRef.current = null;
+      }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [noteUrl]);
 
@@ -276,6 +321,8 @@ export const RevisionModePanel: React.FC<RevisionModePanelProps> = ({
     },
   ];
 
+  const isDriveUrl = Boolean(fallbackOpenUrl && /drive\.google\.com|docs\.google\.com/i.test(fallbackOpenUrl));
+
   return (
     <div className="w-full rounded-2xl bg-[#09090b] text-neutral-100 border border-neutral-800/90 shadow-2xl overflow-hidden animate-fadeIn">
       {/* Editorial Top Header */}
@@ -287,7 +334,7 @@ export const RevisionModePanel: React.FC<RevisionModePanelProps> = ({
                 <Sparkles size={11} />
                 Revision Mode
               </span>
-              {fromCache && !loading && (
+              {fromCache && !isGenerating && (
                 <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-400 bg-neutral-900 border border-neutral-800 px-2 py-0.5 rounded-md">
                   Saved Offline
                 </span>
@@ -304,13 +351,13 @@ export const RevisionModePanel: React.FC<RevisionModePanelProps> = ({
           <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
-              disabled={loading}
+              disabled={isGenerating}
               onClick={() => fetchRevisionPack(true)}
               className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-100 border border-neutral-700/80 text-xs font-bold transition-all cursor-pointer disabled:opacity-50 active:scale-[0.98]"
               title="Regenerate fresh revision pack from notes"
             >
-              <RefreshCw size={13} className={loading ? "animate-spin text-orange-400" : "text-orange-400"} />
-              {loading ? "Generating..." : "Regenerate"}
+              <RefreshCw size={13} className={isGenerating ? "animate-spin text-orange-400" : "text-orange-400"} />
+              {isGenerating ? "Generating..." : "Regenerate"}
             </button>
             {onClose && (
               <button
@@ -341,8 +388,8 @@ export const RevisionModePanel: React.FC<RevisionModePanelProps> = ({
         </div>
       </div>
 
-      {/* Loading Skeleton */}
-      {loading && (
+      {/* Loading Skeleton (only while isGenerating is true) */}
+      {isGenerating && (
         <div className="p-5 md:p-6 space-y-5">
           <div className="flex items-center gap-3 text-xs font-bold text-orange-400">
             <div className="w-2 h-2 rounded-full bg-orange-500 animate-ping" />
@@ -371,15 +418,15 @@ export const RevisionModePanel: React.FC<RevisionModePanelProps> = ({
         </div>
       )}
 
-      {/* Clear Fallback Error Message */}
-      {!loading && error && (
+      {/* Clear Fallback Error Card */}
+      {!isGenerating && error && (
         <div className="p-6 md:p-8 text-center space-y-4">
-          <div className="w-12 h-12 mx-auto rounded-2xl bg-orange-500/10 border border-orange-500/30 flex items-center justify-center text-orange-400">
+          <div className="w-12 h-12 mx-auto rounded-2xl bg-red-500/10 border border-red-500/30 flex items-center justify-center text-red-400">
             <AlertTriangle size={22} />
           </div>
           <div className="space-y-1.5 max-w-md mx-auto">
-            <h4 className="text-sm font-black text-white">Unable to Load Revision Mode</h4>
-            <p className="text-xs text-neutral-400 leading-relaxed">{error}</p>
+            <h4 className="text-sm font-black text-white">Could Not Generate Revision Mode</h4>
+            <p className="text-xs text-neutral-300 leading-relaxed">{error}</p>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-2.5 pt-1">
             <button
@@ -387,16 +434,25 @@ export const RevisionModePanel: React.FC<RevisionModePanelProps> = ({
               onClick={() => fetchRevisionPack(true)}
               className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold transition-all cursor-pointer shadow-sm"
             >
-              <RefreshCw size={13} /> Retry Analysis
+              <RefreshCw size={13} /> Retry
             </button>
+            {onClose && (
+              <button
+                type="button"
+                onClick={onClose}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-200 border border-neutral-700 text-xs font-bold transition-all cursor-pointer"
+              >
+                Back to Notes View
+              </button>
+            )}
             {fallbackOpenUrl && (
               <a
                 href={fallbackOpenUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-200 border border-neutral-700 text-xs font-bold transition-all"
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-orange-300 border border-orange-500/30 text-xs font-bold transition-all"
               >
-                <ExternalLink size={13} /> Open Notes Directly
+                <ExternalLink size={13} /> {isDriveUrl ? "Open in Drive" : "Open Notes"}
               </a>
             )}
           </div>
@@ -404,7 +460,7 @@ export const RevisionModePanel: React.FC<RevisionModePanelProps> = ({
       )}
 
       {/* Loaded Revision Pack Content */}
-      {!loading && !error && pack && (
+      {!isGenerating && !error && pack && (
         <div className="flex flex-col">
           {/* Section Navigation Tabs */}
           <div className="px-4 md:px-6 pt-4 pb-3 border-b border-neutral-800/80 bg-[#0b0b0e] flex flex-wrap gap-2">

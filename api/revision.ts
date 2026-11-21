@@ -3,11 +3,11 @@ import fs from "fs";
 import path from "path";
 import { initializeApp as initializeAdminApp, getApps as getAdminApps } from "firebase-admin/app";
 import { getAuth as getAdminAuth } from "firebase-admin/auth";
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI, ThinkingLevel, Type } from "@google/genai";
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024; // 25 MB limit for AI document analysis
 const MAX_REDIRECTS = 6;
-const FETCH_TIMEOUT_MS = 25000;
+const FETCH_TIMEOUT_MS = 12000;
 
 interface RevisionTopic {
   topic: string;
@@ -161,7 +161,7 @@ function transformGoogleUrl(rawUrl: string): { targetUrl: string; error?: string
     if (urlObj.pathname.includes("/drive/folders/") || urlObj.pathname.includes("/drive/search")) {
       return {
         targetUrl: rawUrl,
-        error: "This note points to a Google Drive folder or search link rather than a direct PDF file, so Revision Mode cannot read it automatically.",
+        error: "This note points to a Google Drive folder or search link rather than a single PDF file, so Revision Mode cannot read it automatically.",
         code: "DRIVE_FOLDER_NOT_SUPPORTED",
       };
     }
@@ -220,6 +220,11 @@ async function fetchWithSafeRedirects(initialUrl: string): Promise<Response> {
       }
 
       return response;
+    } catch (err: any) {
+      if (err?.name === "AbortError") {
+        throw new Error(`Timed out after ${Math.round(FETCH_TIMEOUT_MS / 1000)}s while downloading notes from Drive/CDN.`);
+      }
+      throw err;
     } finally {
       clearTimeout(timer);
     }
@@ -229,9 +234,9 @@ async function fetchWithSafeRedirects(initialUrl: string): Promise<Response> {
 }
 
 async function fetchNoteContent(rawFileUrl: string): Promise<
-  | { kind: "pdf"; base64: string }
-  | { kind: "text"; text: string }
-  | { kind: "error"; status: number; message: string; code: string }
+  | { kind: "pdf"; base64: string; bytes: number }
+  | { kind: "text"; text: string; bytes: number }
+  | { kind: "error"; status: 400 | 500; message: string; code: string }
 > {
   // Handle embedded base64 data URIs
   if (rawFileUrl.startsWith("data:")) {
@@ -256,7 +261,7 @@ async function fetchNoteContent(rawFileUrl: string): Promise<
     if (buffer.byteLength === 0) {
       return {
         kind: "error",
-        status: 422,
+        status: 400,
         code: "EMPTY_FILE",
         message: "The attached note file appears to be empty.",
       };
@@ -265,23 +270,23 @@ async function fetchNoteContent(rawFileUrl: string): Promise<
     if (buffer.byteLength > MAX_FILE_BYTES) {
       return {
         kind: "error",
-        status: 413,
+        status: 400,
         code: "FILE_TOO_LARGE",
         message: "This note file exceeds the 25 MB limit for Revision Mode analysis.",
       };
     }
 
     if (mimeType.includes("pdf") || buffer.subarray(0, 5).toString("ascii") === "%PDF-") {
-      return { kind: "pdf", base64: buffer.toString("base64") };
+      return { kind: "pdf", base64: buffer.toString("base64"), bytes: buffer.byteLength };
     }
 
     if (mimeType.startsWith("text/")) {
-      return { kind: "text", text: buffer.toString("utf-8").slice(0, 200000) };
+      return { kind: "text", text: buffer.toString("utf-8").slice(0, 200000), bytes: buffer.byteLength };
     }
 
     return {
       kind: "error",
-      status: 422,
+      status: 400,
       code: "UNSUPPORTED_FILE_TYPE",
       message: "Revision Mode currently supports PDF and plain text study notes.",
     };
@@ -302,7 +307,7 @@ async function fetchNoteContent(rawFileUrl: string): Promise<
   if (parsedInitial.protocol !== "https:" || !isAllowedHost(parsedInitial.hostname)) {
     return {
       kind: "error",
-      status: 403,
+      status: 400,
       code: "HOST_NOT_ALLOWED",
       message: "This note URL host is not permitted for server-side Revision Mode fetching.",
     };
@@ -312,32 +317,42 @@ async function fetchNoteContent(rawFileUrl: string): Promise<
   if (transformed.error) {
     return {
       kind: "error",
-      status: 422,
+      status: 400,
       code: transformed.code || "NOT_DIRECT_FILE",
       message: transformed.error,
     };
   }
 
-  let upstream = await fetchWithSafeRedirects(transformed.targetUrl);
+  let upstream: Response;
+  try {
+    upstream = await fetchWithSafeRedirects(transformed.targetUrl);
 
-  if (
-    !upstream.ok &&
-    transformed.targetUrl.includes("drive.usercontent.google.com/download")
-  ) {
-    const fileId = extractGoogleDriveFileId(parsedInitial);
-    if (fileId) {
-      upstream = await fetchWithSafeRedirects(
-        `https://drive.google.com/uc?export=download&id=${encodeURIComponent(fileId)}`
-      );
+    if (
+      !upstream.ok &&
+      transformed.targetUrl.includes("drive.usercontent.google.com/download")
+    ) {
+      const fileId = extractGoogleDriveFileId(parsedInitial);
+      if (fileId) {
+        upstream = await fetchWithSafeRedirects(
+          `https://drive.google.com/uc?export=download&id=${encodeURIComponent(fileId)}`
+        );
+      }
     }
+  } catch (fetchErr: any) {
+    return {
+      kind: "error",
+      status: 500,
+      code: "DRIVE_CDN_FETCH_FAILED",
+      message: fetchErr?.message || "Failed to connect to Google Drive or CDN storage to fetch the notes.",
+    };
   }
 
   if (!upstream.ok) {
     return {
       kind: "error",
-      status: 422,
-      code: "UPSTREAM_FETCH_FAILED",
-      message: `Unable to fetch these notes from storage (HTTP ${upstream.status}). You can still open or download the notes directly.`,
+      status: 500,
+      code: "DRIVE_CDN_FETCH_FAILED",
+      message: `Could not fetch these notes from Drive/CDN (HTTP ${upstream.status}). You can open the notes directly instead.`,
     };
   }
 
@@ -345,10 +360,10 @@ async function fetchNoteContent(rawFileUrl: string): Promise<
   if (contentType.includes("text/html")) {
     return {
       kind: "error",
-      status: 422,
-      code: "DRIVE_HTML_RESPONSE",
+      status: 400,
+      code: "NON_PDF_HTML_RESPONSE",
       message:
-        "This Google Drive link returned a web/sign-in page instead of a PDF file. Make sure sharing is set to 'Anyone with the link' or upload a direct PDF.",
+        "This Google Drive link returned an HTML web/sign-in page instead of a PDF file. Make sure sharing is set to 'Anyone with the link' or open it directly in Drive.",
     };
   }
 
@@ -356,17 +371,28 @@ async function fetchNoteContent(rawFileUrl: string): Promise<
   if (contentLengthHeader && Number(contentLengthHeader) > MAX_FILE_BYTES) {
     return {
       kind: "error",
-      status: 413,
+      status: 400,
       code: "FILE_TOO_LARGE",
       message: "This note file exceeds the 25 MB limit for Revision Mode analysis.",
     };
   }
 
-  const arrayBuffer = await upstream.arrayBuffer();
+  let arrayBuffer: ArrayBuffer;
+  try {
+    arrayBuffer = await upstream.arrayBuffer();
+  } catch (readErr: any) {
+    return {
+      kind: "error",
+      status: 500,
+      code: "DRIVE_CDN_STREAM_FAILED",
+      message: readErr?.message || "Failed while reading the note file bytes from storage.",
+    };
+  }
+
   if (arrayBuffer.byteLength === 0) {
     return {
       kind: "error",
-      status: 422,
+      status: 400,
       code: "EMPTY_FILE",
       message: "The fetched note file was empty.",
     };
@@ -375,7 +401,7 @@ async function fetchNoteContent(rawFileUrl: string): Promise<
   if (arrayBuffer.byteLength > MAX_FILE_BYTES) {
     return {
       kind: "error",
-      status: 413,
+      status: 400,
       code: "FILE_TOO_LARGE",
       message: "This note file exceeds the 25 MB limit for Revision Mode analysis.",
     };
@@ -385,18 +411,18 @@ async function fetchNoteContent(rawFileUrl: string): Promise<
   const isPdfMagic = buffer.subarray(0, 5).toString("ascii") === "%PDF-";
 
   if (contentType.includes("pdf") || isPdfMagic || rawFileUrl.toLowerCase().split("?")[0].endsWith(".pdf")) {
-    return { kind: "pdf", base64: buffer.toString("base64") };
+    return { kind: "pdf", base64: buffer.toString("base64"), bytes: buffer.byteLength };
   }
 
   if (contentType.startsWith("text/") || contentType.includes("json")) {
-    return { kind: "text", text: buffer.toString("utf-8").slice(0, 200000) };
+    return { kind: "text", text: buffer.toString("utf-8").slice(0, 200000), bytes: buffer.byteLength };
   }
 
   return {
     kind: "error",
-    status: 422,
-    code: "UNSUPPORTED_FILE_TYPE",
-    message: `Unsupported note format (${contentType.split(";")[0]}). Revision Mode works with PDF and text lecture notes.`,
+    status: 400,
+    code: "NON_PDF_UNSUPPORTED_TYPE",
+    message: `Unsupported file type (${contentType.split(";")[0]}). Revision Mode requires a PDF or plain text notes file.`,
   };
 }
 
@@ -465,42 +491,14 @@ function normalizeRevisionPack(raw: any): RevisionPack {
   return { importantTopics, importantQuestions, quickChecklist, mcqs };
 }
 
-async function generateWithRetry(ai: GoogleGenAI, params: Parameters<GoogleGenAI["models"]["generateContent"]>[0]) {
-  const delays = [800, 1800];
-  let lastErr: any;
-
-  for (let attempt = 0; attempt <= delays.length; attempt++) {
-    try {
-      return await ai.models.generateContent(params);
-    } catch (err: any) {
-      lastErr = err;
-      const msg = String(err?.message || "");
-      const status = err?.status || err?.code;
-      const isTransient =
-        status === 429 ||
-        status === 503 ||
-        status === 500 ||
-        msg.includes("503") ||
-        msg.includes("UNAVAILABLE") ||
-        msg.includes("RESOURCE_EXHAUSTED") ||
-        msg.includes("fetch failed");
-
-      if (!isTransient || attempt === delays.length) {
-        throw err;
-      }
-      await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
-    }
-  }
-
-  throw lastErr;
-}
-
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  const reqStart = Date.now();
+
   if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method Not Allowed" });
+    return res.status(400).json({ error: "Method Not Allowed. Use POST.", code: "METHOD_NOT_ALLOWED" });
   }
 
-  // Strictly gate Revision Mode to logged-in users via Firebase ID Token
+  // Step 1: Strictly gate Revision Mode to logged-in users via Firebase ID Token
   const authHeader = typeof req.headers.authorization === "string" ? req.headers.authorization : "";
   const idToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
 
@@ -508,6 +506,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(401).json({
       error: "Authentication required. Please sign in to use Revision Mode.",
       code: "UNAUTHENTICATED",
+      step: "auth",
     });
   }
 
@@ -515,15 +514,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     ensureFirebaseAdmin();
     const decoded = await getAdminAuth().verifyIdToken(idToken);
     if (!decoded?.uid) {
-      return res.status(401).json({ error: "Invalid user session.", code: "UNAUTHENTICATED" });
+      return res.status(401).json({ error: "Invalid user session.", code: "UNAUTHENTICATED", step: "auth" });
     }
-  } catch (authErr: any) {
+  } catch {
     return res.status(401).json({
       error: "Your session has expired or is invalid. Please sign in again to use Revision Mode.",
       code: "INVALID_AUTH_TOKEN",
+      step: "auth",
     });
   }
 
+  // Step 2: Validate request payload & server key
   const { year, dept, sem, subject, unitTitle, fileUrl } = (req.body || {}) as Record<string, any>;
 
   const cleanFileUrl = typeof fileUrl === "string" ? fileUrl.trim() : "";
@@ -537,6 +538,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({
       error: "No note file URL is attached to this unit.",
       code: "MISSING_FILE_URL",
+      step: "validation",
     });
   }
 
@@ -545,64 +547,81 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({
       error: "Revision Mode service is not configured yet (missing server API key).",
       code: "MISSING_GEMINI_KEY",
+      step: "config",
     });
   }
 
-  try {
-    const noteContent = await fetchNoteContent(cleanFileUrl);
-    if (noteContent.kind === "error") {
-      return res.status(noteContent.status).json({
-        error: noteContent.message,
-        code: noteContent.code,
-      });
-    }
+  // Step 3: Fetch note bytes from Drive / CDN
+  const fetchStart = Date.now();
+  const noteContent = await fetchNoteContent(cleanFileUrl);
+  const fetchDurationMs = Date.now() - fetchStart;
 
-    const ai = new GoogleGenAI({
-      apiKey: geminiApiKey,
-      httpOptions: {
-        headers: {
-          "User-Agent": "aistudio-build",
-        },
-      },
+  if (noteContent.kind === "error") {
+    console.log(
+      `[revision] Drive/CDN fetch failed in ${fetchDurationMs}ms (status=${noteContent.status}, code=${noteContent.code}): ${noteContent.message}`
+    );
+    return res.status(noteContent.status).json({
+      error: noteContent.message,
+      code: noteContent.code,
+      step: "fetch_notes",
     });
+  }
 
-    const systemInstruction = `You are an expert B.Tech university exam coach and academic editor for Anurag University students (ZERO2ONE study platform).
-Your job is to transform the provided lecture notes document into a high-yield, exam-focused Revision Pack strictly grounded in the uploaded notes.
+  console.log(
+    `[revision] Drive/CDN fetch succeeded in ${fetchDurationMs}ms (kind=${noteContent.kind}, bytes=${noteContent.bytes}, subject="${cleanSubject}", unit="${cleanUnitTitle}")`
+  );
+
+  // Step 4: Call Gemini (ThinkingLevel.LOW for fast structured JSON output)
+  const ai = new GoogleGenAI({
+    apiKey: geminiApiKey,
+    httpOptions: {
+      headers: {
+        "User-Agent": "aistudio-build",
+      },
+    },
+  });
+
+  const systemInstruction = `You are an expert B.Tech university exam coach and academic editor for Anurag University students (ZERO2ONE study platform).
+Transform the provided lecture notes document into a high-yield, exam-focused Revision Pack strictly grounded in the uploaded notes.
 
 CRITICAL RULES:
-1. Ground EVERY topic, question, key point, checklist item, and MCQ strictly in the contents of the attached study notes document. Do NOT invent formulas, theorems, or syllabus topics that are absent from the document.
-2. For every item's "noteRef", cite the specific section heading, subtopic title, slide/page number, or diagram/definition name directly visible in the notes (e.g. "Sec 2.3: Deadlock Prevention (p. 6)" or "Page 4 - B+ Tree Insertion").
-3. Generate balanced exam coverage:
-   - importantTopics: 5 to 8 key concepts from these notes, prioritizing high-weightage exam topics ("High" or "Medium").
-   - importantQuestions: 6 to 9 exam questions spanning 2-mark (short definition/concept), 5-mark (medium derivation/comparison/example), and 10-mark (long essay/algorithm/design) questions, each with 3 to 5 crisp exam-ready keyPoints.
-   - quickChecklist: 6 to 10 concrete last-minute revision checks ("Can I explain...", "Do I know the time complexity/formula for...") with unique short IDs like "chk_1".
-   - mcqs: 5 to 8 conceptual multiple-choice questions with exactly 4 distinct options, accurate zero-based correctIndex (0..3), a concise explanation grounded in the notes, and noteRef.
-4. Keep wording sharp, clear, and concise so a student can revise the unit quickly before exams.`;
+1. Ground EVERY topic, question, key point, checklist item, and MCQ strictly in the contents of the attached study notes document. Do NOT invent formulas, theorems, or syllabus topics absent from the document.
+2. For every item's "noteRef", cite the specific section heading, subtopic title, slide/page number, or diagram/definition name visible in the notes.
+3. Generate balanced, concise exam coverage:
+   - importantTopics: 5 to 7 key concepts with priority ("High" or "Medium"), whyImportant, and noteRef.
+   - importantQuestions: 6 exam questions spanning 2-mark, 5-mark, and 10-mark questions, each with 3 to 4 crisp exam-ready keyPoints and noteRef.
+   - quickChecklist: 6 to 8 concise last-minute revision checks with unique short IDs like "chk_1".
+   - mcqs: 5 to 6 conceptual MCQs with exactly 4 distinct options, zero-based correctIndex (0..3), concise explanation, and noteRef.`;
 
-    const contextPrompt = `Student Academic Context:
+  const contextPrompt = `Student Academic Context:
 - Year: ${cleanYear || "N/A"}
 - Department: ${cleanDept}
 - Semester: ${cleanSem || "N/A"}
 - Subject: ${cleanSubject}
 - Unit: ${cleanUnitTitle}
 
-Analyze the attached study notes carefully and return valid JSON strictly matching the schema.`;
+Analyze the attached study notes and return valid JSON matching the schema.`;
 
-    const contentParts =
-      noteContent.kind === "pdf"
-        ? [
-            { inlineData: { mimeType: "application/pdf", data: noteContent.base64 } },
-            { text: contextPrompt },
-          ]
-        : [
-            { text: `--- STUDY NOTES CONTENT ---\n${noteContent.text}\n--- END NOTES ---\n\n${contextPrompt}` },
-          ];
+  const contentParts =
+    noteContent.kind === "pdf"
+      ? [
+          { inlineData: { mimeType: "application/pdf", data: noteContent.base64 } },
+          { text: contextPrompt },
+        ]
+      : [
+          { text: `--- STUDY NOTES CONTENT ---\n${noteContent.text}\n--- END NOTES ---\n\n${contextPrompt}` },
+        ];
 
-    const response = await generateWithRetry(ai, {
+  const geminiStart = Date.now();
+  let textOutput: string | undefined;
+
+  try {
+    const response = await ai.models.generateContent({
       model: "gemini-4-hydrogen",
       contents: { parts: contentParts },
       config: {
         systemInstruction,
+        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -671,50 +690,72 @@ Analyze the attached study notes carefully and return valid JSON strictly matchi
       },
     });
 
-    const textOutput = response.text;
-    if (!textOutput) {
-      return res.status(502).json({
-        error: "Revision generator returned an empty response. Please try regenerating.",
-        code: "EMPTY_MODEL_RESPONSE",
-      });
-    }
-
-    let cleanJson = textOutput.trim();
-    if (cleanJson.startsWith("```json")) {
-      cleanJson = cleanJson.slice(7);
-    } else if (cleanJson.startsWith("```")) {
-      cleanJson = cleanJson.slice(3);
-    }
-    if (cleanJson.endsWith("```")) {
-      cleanJson = cleanJson.slice(0, -3);
-    }
-    cleanJson = cleanJson.trim();
-
-    const parsed = JSON.parse(cleanJson);
-    const revisionPack = normalizeRevisionPack(parsed);
-
-    if (
-      revisionPack.importantTopics.length === 0 &&
-      revisionPack.importantQuestions.length === 0 &&
-      revisionPack.quickChecklist.length === 0 &&
-      revisionPack.mcqs.length === 0
-    ) {
-      return res.status(422).json({
-        error: "Could not extract readable study content from this file. It may be an image-only scan or encrypted PDF.",
-        code: "NO_EXTRACTABLE_CONTENT",
-      });
-    }
-
-    return res.status(200).json({ revisionPack });
-  } catch (err: any) {
-    console.error("Revision Mode API error:", err?.message || err);
-    const msg = String(err?.message || "Failed to generate Revision Mode pack.");
-    const isQuota = msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED");
-    return res.status(isQuota ? 429 : 500).json({
+    textOutput = response.text;
+    const geminiDurationMs = Date.now() - geminiStart;
+    console.log(
+      `[revision] Gemini call completed in ${geminiDurationMs}ms (outputChars=${textOutput?.length || 0})`
+    );
+  } catch (geminiErr: any) {
+    const geminiDurationMs = Date.now() - geminiStart;
+    const rawMsg = String(geminiErr?.message || "Gemini API request failed.");
+    console.error(`[revision] Gemini API error after ${geminiDurationMs}ms:`, rawMsg);
+    const isQuota = rawMsg.includes("429") || rawMsg.includes("RESOURCE_EXHAUSTED");
+    return res.status(500).json({
       error: isQuota
-        ? "Revision Mode is temporarily busy due to rate limits. Please try again in a moment."
-        : msg,
-      code: isQuota ? "RATE_LIMITED" : "REVISION_GENERATION_FAILED",
+        ? "Revision Mode AI service is temporarily rate-limited. Please wait a moment and retry."
+        : `Gemini AI error while reading notes: ${rawMsg}`,
+      code: isQuota ? "GEMINI_RATE_LIMITED" : "GEMINI_API_ERROR",
+      step: "gemini",
     });
   }
+
+  // Step 5: Parse & validate structured JSON response
+  if (!textOutput || !textOutput.trim()) {
+    return res.status(500).json({
+      error: "Gemini returned an empty response for these notes. Please try regenerating.",
+      code: "INVALID_JSON_EMPTY",
+      step: "parse_json",
+    });
+  }
+
+  let cleanJson = textOutput.trim();
+  if (cleanJson.startsWith("```json")) {
+    cleanJson = cleanJson.slice(7);
+  } else if (cleanJson.startsWith("```")) {
+    cleanJson = cleanJson.slice(3);
+  }
+  if (cleanJson.endsWith("```")) {
+    cleanJson = cleanJson.slice(0, -3);
+  }
+  cleanJson = cleanJson.trim();
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(cleanJson);
+  } catch (parseErr: any) {
+    console.error("[revision] Invalid JSON output from Gemini:", parseErr?.message || parseErr);
+    return res.status(500).json({
+      error: "Gemini returned malformed JSON while building your Revision Pack. Please retry.",
+      code: "INVALID_JSON_OUTPUT",
+      step: "parse_json",
+    });
+  }
+
+  const revisionPack = normalizeRevisionPack(parsed);
+
+  if (
+    revisionPack.importantTopics.length === 0 &&
+    revisionPack.importantQuestions.length === 0 &&
+    revisionPack.quickChecklist.length === 0 &&
+    revisionPack.mcqs.length === 0
+  ) {
+    return res.status(400).json({
+      error: "Could not extract readable study content from this file. It may be an image-only scan or protected PDF.",
+      code: "NO_EXTRACTABLE_CONTENT",
+      step: "parse_json",
+    });
+  }
+
+  console.log(`[revision] Total request completed in ${Date.now() - reqStart}ms`);
+  return res.status(200).json({ revisionPack });
 }
