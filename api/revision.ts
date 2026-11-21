@@ -10,6 +10,7 @@ import { GoogleGenAI, ThinkingLevel, Type } from "@google/genai";
 const MAX_FILE_BYTES = 25 * 1024 * 1024; // 25 MB limit for AI document analysis
 const MAX_REDIRECTS = 6;
 const FETCH_TIMEOUT_MS = 12000;
+const PER_MODEL_TIMEOUT_MS = 8000;
 const FIRESTORE_CACHE_TIMEOUT_MS = 2500;
 const REVISION_CACHE_COLLECTION = "revision_packs";
 
@@ -17,9 +18,9 @@ const MODEL_FALLBACK_CHAIN: ReadonlyArray<{
   model: string;
   thinkingLevel: ThinkingLevel;
 }> = [
-  { model: "gemini-4-hydrogen", thinkingLevel: ThinkingLevel.LOW },
   { model: "gemini-3.8-flash", thinkingLevel: ThinkingLevel.LOW },
   { model: "gemini-3.5-flash-lite", thinkingLevel: ThinkingLevel.MINIMAL },
+  { model: "gemini-4-hydrogen", thinkingLevel: ThinkingLevel.LOW },
 ];
 
 interface RevisionTopic {
@@ -540,6 +541,7 @@ function normalizeRevisionPack(raw: any): RevisionPack {
   const importantTopics: RevisionTopic[] = Array.isArray(raw?.importantTopics)
     ? raw.importantTopics
         .filter((t: any) => t && typeof t.topic === "string" && t.topic.trim())
+        .slice(0, 6)
         .map((t: any) => ({
           topic: String(t.topic).trim(),
           priority: t.priority === "High" ? "High" : "Medium",
@@ -551,11 +553,12 @@ function normalizeRevisionPack(raw: any): RevisionPack {
   const importantQuestions: RevisionQuestion[] = Array.isArray(raw?.importantQuestions)
     ? raw.importantQuestions
         .filter((q: any) => q && typeof q.question === "string" && q.question.trim())
+        .slice(0, 6)
         .map((q: any) => {
           const numMarks = Number(q.marks);
           const marks: 2 | 5 | 10 = numMarks === 2 ? 2 : numMarks === 10 ? 10 : 5;
           const keyPoints = Array.isArray(q.keyPoints)
-            ? q.keyPoints.map((kp: any) => String(kp).trim()).filter(Boolean)
+            ? q.keyPoints.map((kp: any) => String(kp).trim()).filter(Boolean).slice(0, 4)
             : [];
           return {
             marks,
@@ -569,6 +572,7 @@ function normalizeRevisionPack(raw: any): RevisionPack {
   const quickChecklist: RevisionChecklistItem[] = Array.isArray(raw?.quickChecklist)
     ? raw.quickChecklist
         .filter((c: any) => c && typeof c.text === "string" && c.text.trim())
+        .slice(0, 6)
         .map((c: any, idx: number) => ({
           id: String(c.id || `chk_${idx + 1}`).trim(),
           text: String(c.text).trim(),
@@ -578,6 +582,7 @@ function normalizeRevisionPack(raw: any): RevisionPack {
   const mcqs: RevisionMcq[] = Array.isArray(raw?.mcqs)
     ? raw.mcqs
         .filter((m: any) => m && typeof m.question === "string" && Array.isArray(m.options) && m.options.length >= 4)
+        .slice(0, 6)
         .map((m: any, idx: number) => {
           const opts: [string, string, string, string] = [
             String(m.options[0] ?? "").trim(),
@@ -604,14 +609,21 @@ function normalizeRevisionPack(raw: any): RevisionPack {
 function isRetryableModelOverloadError(err: any): boolean {
   const status = Number(err?.status ?? err?.code ?? 0);
   if (status === 503 || status === 429) return true;
+  const name = String(err?.name || "").toUpperCase();
   const msg = String(err?.message || "").toUpperCase();
   return (
+    name === "TIMEOUTERROR" ||
+    name === "ABORTERROR" ||
     msg.includes("503") ||
     msg.includes("429") ||
     msg.includes("UNAVAILABLE") ||
     msg.includes("RESOURCE_EXHAUSTED") ||
     msg.includes("HIGH DEMAND") ||
-    msg.includes("OVERLOADED")
+    msg.includes("OVERLOADED") ||
+    msg.includes("TIMEOUT") ||
+    msg.includes("TIMED OUT") ||
+    msg.includes("ABORT") ||
+    msg.includes("ETIMEDOUT")
   );
 }
 
@@ -738,27 +750,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     `[revision] Drive/CDN fetch succeeded in ${fetchDurationMs}ms (kind=${noteContent.kind}, bytes=${noteContent.bytes}, subject="${cleanSubject}", unit="${cleanUnitTitle}")`
   );
 
-  // Step 4: Call Gemini with ordered automatic fallback chain on 503 / 429 spikes
+  // Step 4: Call Gemini with fast failover (8s per model, no SDK retry backoff)
   const ai = new GoogleGenAI({
     apiKey: geminiApiKey,
     httpOptions: {
+      timeout: PER_MODEL_TIMEOUT_MS,
+      retryOptions: { attempts: 1 },
       headers: {
         "User-Agent": "aistudio-build",
       },
     },
   });
 
-  const systemInstruction = `You are an expert B.Tech university exam coach and academic editor for Anurag University students (ZERO2ONE study platform).
-Transform the provided lecture notes document into a high-yield, exam-focused Revision Pack strictly grounded in the uploaded notes.
+  const systemInstruction = `You are a concise B.Tech university exam coach for Anurag University students (ZERO2ONE).
+Extract a crisp, high-yield Revision Pack strictly grounded in the provided study notes document.
 
 CRITICAL RULES:
-1. Ground EVERY topic, question, key point, checklist item, and MCQ strictly in the contents of the attached study notes document. Do NOT invent formulas, theorems, or syllabus topics absent from the document.
-2. For every item's "noteRef", cite the specific section heading, subtopic title, slide/page number, or diagram/definition name visible in the notes.
-3. Generate balanced, concise exam coverage:
-   - importantTopics: 5 to 7 key concepts with priority ("High" or "Medium"), whyImportant, and noteRef.
-   - importantQuestions: 6 exam questions spanning 2-mark, 5-mark, and 10-mark questions, each with 3 to 4 crisp exam-ready keyPoints and noteRef.
-   - quickChecklist: 6 to 8 concise last-minute revision checks with unique short IDs like "chk_1".
-   - mcqs: 5 to 6 conceptual MCQs with exactly 4 distinct options, zero-based correctIndex (0..3), concise explanation, and noteRef.`;
+1. Ground EVERY item strictly in the attached study notes. Do NOT invent formulas, theorems, or concepts absent from the document.
+2. For each item's "noteRef", cite the short section/heading or page/slide number visible in the notes.
+3. Keep all output CRISP and concise (1 brief sentence max per field) and strictly cap item counts for fast revision:
+   - importantTopics: 5 to 6 key concepts with priority ("High" or "Medium"), concise 1-sentence whyImportant, and noteRef.
+   - importantQuestions: exactly 6 exam questions (two 2M, two 5M, two 10M), each with 3 crisp keyPoints and noteRef.
+   - quickChecklist: exactly 6 short, actionable revision checks with unique IDs ("chk_1" to "chk_6").
+   - mcqs: exactly 6 conceptual MCQs with 4 brief options, zero-based correctIndex (0..3), 1-sentence explanation, and noteRef.`;
 
   const contextPrompt = `Student Academic Context:
 - Year: ${cleanYear || "N/A"}
@@ -862,6 +876,7 @@ Analyze the attached study notes and return valid JSON matching the schema.`;
           thinkingConfig: { thinkingLevel: candidate.thinkingLevel },
           responseMimeType: "application/json",
           responseSchema,
+          abortSignal: AbortSignal.timeout(PER_MODEL_TIMEOUT_MS),
         },
       });
 
@@ -881,7 +896,7 @@ Analyze the attached study notes and return valid JSON matching the schema.`;
       if (canFallback) {
         const nextModel = MODEL_FALLBACK_CHAIN[i + 1].model;
         console.warn(
-          `[revision] Model ${candidate.model} overloaded/unavailable after ${attemptMs}ms (${rawMsg}). Retrying with fallback model ${nextModel}...`
+          `[revision] Model ${candidate.model} failed/timed out after ${attemptMs}ms (${rawMsg}). Failing over immediately to ${nextModel}...`
         );
         continue;
       }

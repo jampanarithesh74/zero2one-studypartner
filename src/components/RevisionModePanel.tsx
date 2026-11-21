@@ -34,7 +34,14 @@ type MarkFilter = "all" | 2 | 5 | 10;
 
 const PACK_CACHE_PREFIX = "zero2one_revision_pack_v1:";
 const CHECKLIST_CACHE_PREFIX = "zero2one_revision_checklist_v1:";
-const REQUEST_TIMEOUT_MS = 30000;
+const REQUEST_TIMEOUT_MS = 55000;
+
+const LOADING_STATUS_STEPS = [
+  "Fetching unit PDF...",
+  "Reading notes & extracting core structure...",
+  "Generating exam revision pack...",
+  "Finalizing topics, questions & MCQs...",
+];
 
 function isValidRevisionPack(data: any): data is RevisionPack {
   return (
@@ -66,8 +73,27 @@ export const RevisionModePanel: React.FC<RevisionModePanelProps> = ({
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [fromCache, setFromCache] = useState<boolean>(false);
+  const [loadingStep, setLoadingStep] = useState<number>(0);
 
   const activeControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    if (!isGenerating) {
+      setLoadingStep(0);
+      return;
+    }
+
+    setLoadingStep(0);
+    const t1 = window.setTimeout(() => setLoadingStep(1), 2200);
+    const t2 = window.setTimeout(() => setLoadingStep(2), 5500);
+    const t3 = window.setTimeout(() => setLoadingStep(3), 13000);
+
+    return () => {
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+      window.clearTimeout(t3);
+    };
+  }, [isGenerating]);
 
   // Questions tab state
   const [markFilter, setMarkFilter] = useState<MarkFilter>("all");
@@ -202,7 +228,7 @@ export const RevisionModePanel: React.FC<RevisionModePanelProps> = ({
       if (err?.name === "AbortError") {
         if (didTimeout) {
           setError(
-            "Revision Mode timed out after 30 seconds while analyzing these notes. Please retry or open the notes directly."
+            "Revision Mode timed out after 55 seconds while analyzing these notes. Please retry or open the notes directly."
           );
           setPack(null);
         }
@@ -394,7 +420,7 @@ export const RevisionModePanel: React.FC<RevisionModePanelProps> = ({
         <div className="p-5 md:p-6 space-y-5">
           <div className="flex items-center gap-3 text-xs font-bold text-orange-400">
             <div className="w-2 h-2 rounded-full bg-orange-500 animate-ping" />
-            <span>Reading your notes & distilling exam-focused revision pack...</span>
+            <span>{LOADING_STATUS_STEPS[loadingStep] || LOADING_STATUS_STEPS[0]}</span>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {[1, 2, 3, 4].map((n) => (
